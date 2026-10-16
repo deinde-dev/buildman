@@ -32,10 +32,10 @@ dependencies = [
 test = ["concurrencytest", "coverage"]
 
 [project.urls]
-Homepage = "https://github.com/nxtboot/buildman"
+Homepage = "https://github.com/deinde-dev/buildman"
 Documentation = "https://buildman.readthedocs.io/"
-Repository = "https://github.com/nxtboot/buildman"
-"Bug Tracker" = "https://github.com/nxtboot/buildman/issues"
+Repository = "https://github.com/deinde-dev/buildman"
+"Bug Tracker" = "https://github.com/deinde-dev/buildman/issues"
 
 [project.scripts]
 buildman = "buildman.main:run_buildman"

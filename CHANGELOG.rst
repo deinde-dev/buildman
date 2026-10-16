@@ -30,7 +30,7 @@ Fixed
 Changed
 ~~~~~~~
 - Buildman is now developed in its own repository at
-  https://github.com/nxtboot/buildman, with its history carried over from
+  https://github.com/deinde-dev/buildman, with its history carried over from
   the U-Boot tree.
 - Buildman is distributed as the self-contained ``buildman`` package, with
   ``u_boot_pylib``, the patman modules it uses and U-Boot's ``qconfig`` tool

@@ -68,7 +68,7 @@ adds ``buildman/_vendor/`` to the start of the import path, so the code still
 imports them by their usual names and matches the U-Boot tree. It also means
 distributed builds can copy the package to workers along with the
 ``u_boot_pylib`` library, which is not vendored: it is a dependency, from the
-``u-boot-pylib`` package (https://github.com/nxtboot/u-boot-pylib).
+``u-boot-pylib`` package (https://github.com/deinde-dev/u-boot-pylib).
 
 When refreshing these from U-Boot, note the U-Boot commit in the commit
 message.

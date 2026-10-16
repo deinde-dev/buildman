@@ -1,8 +1,8 @@
 Buildman build tool
 ===================
 
-.. image:: https://github.com/nxtboot/buildman/actions/workflows/test.yml/badge.svg
-   :target: https://github.com/nxtboot/buildman/actions/workflows/test.yml
+.. image:: https://github.com/deinde-dev/buildman/actions/workflows/test.yml/badge.svg
+   :target: https://github.com/deinde-dev/buildman/actions/workflows/test.yml
    :alt: Test status
 
 .. image:: https://img.shields.io/pypi/v/buildman.svg
