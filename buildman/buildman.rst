@@ -1172,14 +1172,13 @@ re-check every rule, binman re-runs and buildman collects the results. Across
 a large board selection this 'no-op' work can be more than half the total
 build time.
 
-The ``--skip-unaffected`` option tells Buildman to skip building a commit for
-a board when it can prove that the commit cannot affect it. It does this using
-the dependency files which the build writes (.cmd files), which list every
-source file, header, devicetree file and linker script used. If all the files
-changed by a commit are either outside the build entirely (such as
-documentation) or are sources which the board's previous build did not use,
-the build is skipped and the previous results are carried forward, including
-any warnings.
+By default, Buildman skips building a commit for a board when it can prove that
+the commit cannot affect it. It does this using the dependency files which the
+build writes (.cmd files), which list every source file, header, devicetree
+file and linker script used. If all the files changed by a commit are either
+outside the build entirely (such as documentation) or are sources which the
+board's previous build did not use, the build is skipped and the previous
+results are carried forward, including any warnings.
 
 Buildman is conservative: anything it does not understand (Makefiles, Kconfig
 files, scripts, tools which run during the build, files with unrecognised
@@ -1187,6 +1186,8 @@ extensions) causes a full rebuild, as does a defconfig change for the board
 being built. Skipped builds are reported in the final summary, e.g.::
 
     Completed: 372 total built (372 newly, 341 skipped as unaffected)
+
+To build every commit regardless, use ``--no-skip-unaffected``.
 
 Note that a skipped build produces exactly the same summary output (sizes,
 warnings, etc.) as the incremental build it replaces would have. In fact the
