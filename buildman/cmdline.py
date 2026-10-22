@@ -198,9 +198,12 @@ def add_after_m(parser):
           help='With -s, show the source code of the lines added/removed '
                'from the build by each commit (implies --lines)')
     parser.add_argument('--skip-unaffected', action='store_true',
-          default=False,
+          default=True,
           help='Skip building commits which cannot affect a board, based on '
-               'the dependencies of its previous build')
+               'the dependencies of its previous build (default)')
+    parser.add_argument('--no-skip-unaffected', dest='skip_unaffected',
+          action='store_false',
+          help='Build every commit, even one which cannot affect a board')
     parser.add_argument('--step', type=int,
           default=1, help='Only build every n commits (0=just first and last)')
     if HAS_TESTS:

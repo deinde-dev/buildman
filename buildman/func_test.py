@@ -299,6 +299,10 @@ class TestFunctional(unittest.TestCase):
         Returns:
             result code from buildman
         """
+        # These tests count the builds, so build every commit unless the test
+        # asks to skip unaffected ones
+        if '--skip-unaffected' not in args:
+            args = args + ('--no-skip-unaffected',)
         sys.argv = [sys.argv[0]] + list(args)
         args = cmdline.parse_args()
         if brds is False:
@@ -406,6 +410,9 @@ class TestFunctional(unittest.TestCase):
             return command.CommandResult(return_code=0)
         if sub_cmd == 'worktree':
             return command.CommandResult(return_code=0)
+        if sub_cmd == 'diff-tree':
+            # The changed files are unknown, so no build is skipped
+            return command.CommandResult(return_code=1)
 
         # Not handled, so abort
         print('git', git_args, sub_cmd, args)
@@ -951,6 +958,33 @@ Idx Name          Size      VMA       LMA       File off  Algn
                           clean_dir=False)
         # Each board has a config and one make per commit
         self.assertEqual(self._make_calls, len(BOARDS) * (self._commits + 1))
+
+    def test_skip_unaffected_default(self):
+        """Test that unaffected commits are skipped unless disabled"""
+        sys.argv = [sys.argv[0]]
+        self.assertTrue(cmdline.parse_args().skip_unaffected)
+        sys.argv = [sys.argv[0], '--skip-unaffected']
+        self.assertTrue(cmdline.parse_args().skip_unaffected)
+        sys.argv = [sys.argv[0], '--no-skip-unaffected']
+        self.assertFalse(cmdline.parse_args().skip_unaffected)
+
+    def test_adjust_cfg_incremental(self):
+        """Test that adjusting the config does not reconfigure every commit"""
+        # The test branch has no Kconfig files, so merge_config.sh cannot run
+        with (mock.patch.object(cfgutil, 'run_merge_config',
+                                return_value=command.CommandResult(
+                                    return_code=0)) as merge,
+              mock.patch.object(cfgutil, 'check_cfg_file',
+                                return_value='') as check):
+            self._run_control('-b', TEST_BRANCH, '-o', self._output_dir,
+                              '-a', '~LOCALVERSION_AUTO')
+        self.assertEqual(self._builder.fail, 0)
+
+        # Each board has a config, then one make per commit, with the
+        # adjustments made once but checked after every build
+        self.assertEqual(self._make_calls, len(BOARDS) * (self._commits + 1))
+        self.assertEqual(merge.call_count, len(BOARDS))
+        self.assertEqual(check.call_count, self._total_builds)
 
     def test_force_reconfigure(self):
         """The -f flag should force a rebuild"""
