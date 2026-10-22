@@ -10,12 +10,18 @@ Unreleased
 
 Changed
 ~~~~~~~
+- Commits which cannot affect a board are skipped by default, as
+  ``--skip-unaffected`` did. Use ``--no-skip-unaffected`` to build every
+  commit.
 - The U-Boot Python library is now a dependency, from the ``u-boot-pylib``
   package, rather than a copy vendored into buildman. A distributed build
   sends it to the workers along with buildman.
 
 Fixed
 ~~~~~
+- With adjusted configs (``-a`` or ``-r``), a board is reconfigured only when
+  needed, as without them, rather than for every commit, and applying the
+  adjustments runs make once fewer.
 - ``buildman --coverage`` runs the tests even when the path to buildman
   contains 'binman', 'patman' or 'pickman', instead of passing them the wrong
   argument and reporting low coverage.
