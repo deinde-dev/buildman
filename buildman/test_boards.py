@@ -201,6 +201,73 @@ config ARCH_RV32I
         finally:
             tools.write_file(kc_file, orig_kc_data)
 
+    def test_kconfig_loongarch(self):
+        """Test KconfigScanner loongarch architecture detection"""
+        src = self._git_dir
+        kc_file = os.path.join(src, 'Kconfig')
+        orig_kc_data = tools.read_file(kc_file)
+
+        loongarch_kconfig = orig_kc_data + b'''
+
+config LOONGARCH
+\tbool
+
+config TARGET_LOONGARCH_BOARD
+\tbool "LoongArch Board"
+\tselect LOONGARCH
+\tdefault n
+
+if TARGET_LOONGARCH_BOARD
+config SYS_ARCH
+\tdefault "loongarch"
+
+config SYS_CPU
+\tdefault "generic"
+
+config SYS_VENDOR
+\tdefault "LoongVendor"
+
+config SYS_BOARD
+\tdefault "LoongArch Board"
+
+config SYS_CONFIG_NAME
+\tdefault "loongarch_config"
+endif
+'''
+        defconfig = os.path.join(src, 'loongarch_defconfig')
+        try:
+            tools.write_file(defconfig, 'CONFIG_TARGET_LOONGARCH_BOARD=y\n',
+                             False)
+
+            # Without an ARCH_LA64 symbol, the lookup fails: loongarch32
+            tools.write_file(kc_file, loongarch_kconfig)
+            scanner = boards.KconfigScanner(src)
+            res, _ = scanner.scan(defconfig, False)
+            self.assertEqual('loongarch32', res['arch'])
+
+            # With ARCH_LA64 disabled: loongarch32
+            la64_kconfig = loongarch_kconfig + b'''
+config ARCH_LA64
+\tbool
+'''
+            tools.write_file(kc_file, la64_kconfig)
+            scanner = boards.KconfigScanner(src)
+            res, _ = scanner.scan(defconfig, False)
+            self.assertEqual('loongarch32', res['arch'])
+
+            # With ARCH_LA64 enabled: loongarch64
+            tools.write_file(kc_file, la64_kconfig + b'''
+config ARCH_LA64
+\tdefault y if TARGET_LOONGARCH_BOARD
+''')
+            scanner = boards.KconfigScanner(src)
+            res, _ = scanner.scan(defconfig, False)
+            self.assertEqual('loongarch64', res['arch'])
+        finally:
+            tools.write_file(kc_file, orig_kc_data)
+            if os.path.exists(defconfig):
+                os.remove(defconfig)
+
     def test_maintainers_commented(self):
         """Test MaintainersDatabase with commented maintainer lines"""
         src = self._git_dir
