@@ -356,6 +356,17 @@ class KconfigScanner:
             else:
                 params['arch'] = 'riscv64'
 
+        # fix-up for loongarch
+        if params['arch'] == 'loongarch':
+            try:
+                value = self._conf.syms.get('ARCH_LA64').str_value
+            except AttributeError:
+                value = ''
+            if value == 'y':
+                params['arch'] = 'loongarch64'
+            else:
+                params['arch'] = 'loongarch32'
+
     def _check_targets(self, leaf, expect_target):
         """Check that exactly one TARGET_xxx option is set
 
