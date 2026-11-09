@@ -1,4 +1,4 @@
-concurrencytest==0.1.11
+concurrencytest==0.1.12
 coverage==7.16.2
 filelock==4.1.0
 u-boot-pylib==0.1.0
