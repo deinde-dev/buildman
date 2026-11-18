@@ -5,14 +5,20 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
-Unreleased
-----------
+0.3.0 - 2026-11-18
+------------------
 
 Added
 ~~~~~
 - ``--shard K/N`` builds one of N shards of the selected boards: the boards
   are sorted by target name and every Nth one is kept, starting with the Kth.
   This allows a large build to be split evenly across several CI jobs.
+
+Fixed
+~~~~~
+- 32-bit and 64-bit LoongArch boards are told apart by
+  ``CONFIG_ARCH_LA64``, so each is built with the right toolchain, as for
+  RISC-V and ARM.
 
 0.2.0 - 2026-10-23
 ------------------
