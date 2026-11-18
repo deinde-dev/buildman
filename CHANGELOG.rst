@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
+Unreleased
+----------
+
+Fixed
+~~~~~
+- The board scan uses at most 32 processes. With about 250 or more, as on
+  a machine with that many CPUs, the last ones ran out of file
+  descriptors which ``select()`` can handle and failed, so that some
+  boards were left out.
+
 0.3.0 - 2026-11-18
 ------------------
 
