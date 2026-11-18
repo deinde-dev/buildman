@@ -9,6 +9,7 @@ import errno
 import multiprocessing
 import os
 from pathlib import Path
+import resource
 import shutil
 import tempfile
 import time
@@ -809,6 +810,58 @@ endif
         params, _ = result
         self.assertEqual('board0', params['target'])
         self.assertEqual('arm', params['arch'])
+
+    def test_scan_defconfigs_scanner_fails(self):
+        """Test scan_defconfigs() reports a scanner process which fails"""
+        src = self._git_dir
+        config_dir = os.path.join(src, 'configs')
+        count = len(os.listdir(config_dir)) + 1
+
+        # A defconfig with #include needs cpp, so use one which does not
+        # exist, to make the scanner fail
+        bad = os.path.join(config_dir, 'bad_defconfig')
+        tools.write_file(bad, b'#include <configs/board0_defconfig>\n')
+        try:
+            brds = boards.Boards()
+            with mock.patch.dict(os.environ, {'CPP': '/no/such/cpp'}):
+                with terminal.capture():
+                    with self.assertRaises(ValueError) as exc:
+                        brds.scan_defconfigs(config_dir, src, 2)
+        finally:
+            os.remove(bad)
+        self.assertRegex(
+            str(exc.exception),
+            'Board scan failed: 1 of 2 scanner processes failed and '
+            f'[0-9]+ of {count} boards were found')
+
+    def test_scan_defconfigs_many_jobs(self):
+        """Test scan_defconfigs() limits the number of scanner processes"""
+        src = self._git_dir
+        config_dir = os.path.join(src, 'configs')
+        count = len(os.listdir(config_dir))
+
+        # Add enough defconfig files to keep 256 scanners busy
+        board0 = os.path.join(config_dir, 'board0_defconfig')
+        extra = [os.path.join(config_dir, f'extra{seq}_defconfig')
+                 for seq in range(300)]
+        for fname in extra:
+            shutil.copy(board0, fname)
+
+        # Each scanner needs four file descriptors here. Allow enough for
+        # MAX_SCAN_JOBS of them, with some to spare, but not for 256, which
+        # is what a machine with that many CPUs asks for
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        limit = (len(os.listdir('/proc/self/fd')) +
+                 4 * boards.MAX_SCAN_JOBS + 64)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
+        try:
+            brds = boards.Boards()
+            params_list, _ = brds.scan_defconfigs(config_dir, src, 256)
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+            for fname in extra:
+                os.remove(fname)
+        self.assertEqual(count + len(extra), len(params_list))
 
     def test_scan_defconfigs_hidden_files(self):
         """Test scan_defconfigs() skips hidden defconfig files"""
