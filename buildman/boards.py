@@ -796,6 +796,36 @@ class Boards:
 
         return result, warnings
 
+    def select_shard(self, result, index, count):
+        """Keep only one shard of the selected boards
+
+        The selected boards are sorted by target and every count'th one is
+        kept, starting with the index'th. Boards which sort together tend to
+        be similar, so taking them at intervals, rather than as a contiguous
+        range, gives shards which take about the same time to build.
+
+        Args:
+            result (OrderedDict): Boards selected due to each argument, as
+                returned by select_boards(); updated to hold just the boards
+                in the shard
+            index (int): Shard to keep, numbered from 1
+            count (int): Number of shards
+
+        Returns:
+            int: Number of boards which were selected, across all shards
+        """
+        selected = sorted(self.get_selected(), key=lambda brd: brd.target)
+        dropped = set()
+        for seq, brd in enumerate(selected):
+            if seq % count != index - 1:
+                brd.build_it = False
+                dropped.add(brd.target)
+        for term, targets in result.items():
+            result[term] = [target for target in targets
+                            if target not in dropped]
+
+        return len(selected)
+
     @classmethod
     def scan_defconfigs_for_multiprocess(cls, srcdir, queue, defconfigs,
                                          warn_targets):

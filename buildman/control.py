@@ -97,7 +97,7 @@ def get_action_summary(is_summary, commit_count, selected, threads, jobs,
 
 # pylint: disable=R0913,R0917
 def show_actions(series, why_selected, boards_selected, output_dir,
-                 board_warnings, step, threads, jobs, verbose):
+                 board_warnings, step, threads, jobs, verbose, shard=None):
     """Display a list of actions that we would take, if not a dry run.
 
     Args:
@@ -116,6 +116,11 @@ def show_actions(series, why_selected, boards_selected, output_dir,
         threads (int): Number of processor threads being used
         jobs (int): Number of jobs to build at once
         verbose (bool): True to indicate why each board was selected
+        shard (tuple): Shard being built, or None if all selected boards are
+            built:
+                int: Shard number, numbered from 1
+                int: Number of shards
+                int: Number of boards selected, across all shards
     """
     col = terminal.Color()
     print('Dry run, so not doing much. But I would do this:')
@@ -140,6 +145,10 @@ def show_actions(series, why_selected, boards_selected, output_dir,
             print(arg, f': {len(why_selected[arg])} boards')
             if verbose:
                 print(f"   {' '.join(why_selected[arg])}")
+    if shard:
+        index, count, total = shard
+        print(f'Shard {index}/{count}: {len(boards_selected)} of {total} '
+              'selected boards')
     print('Total boards to build for each '
           f"commit: {len(why_selected['all'])}\n")
     if board_warnings:
@@ -438,7 +447,7 @@ def get_boards_obj(output_dir, regen_board_list, maintainer_check, full_check,
     return brds
 
 
-def determine_boards(brds, args, col, opt_boards, exclude_list):
+def determine_boards(brds, args, col, opt_boards, exclude_list, shard=None):
     """Determine which boards to build
 
     Each element of args and exclude can refer to a board name, arch or SoC
@@ -449,6 +458,10 @@ def determine_boards(brds, args, col, opt_boards, exclude_list):
         col (Terminal.Color): Color object
         opt_boards (list of str): Specific boards to build, or None for all
         exclude_list (list of str): Arguments describing boards to exclude
+        shard (tuple): Shard of the selected boards to build, or None to build
+            them all:
+                int: Shard number, numbered from 1
+                int: Number of shards
 
     Returns:
         tuple:
@@ -459,6 +472,10 @@ def determine_boards(brds, args, col, opt_boards, exclude_list):
                     in 400 boards, so in this case the key would be 'arm' and
                     the value would be a list of board names.
             board_warnings: List of warnings obtained from board selected
+            shard: Shard being built, or None if all selected boards are built:
+                int: Shard number, numbered from 1
+                int: Number of shards
+                int: Number of boards selected, across all shards
     """
     exclude = []
     if exclude_list:
@@ -476,7 +493,15 @@ def determine_boards(brds, args, col, opt_boards, exclude_list):
     selected = brds.get_selected()
     if not selected:
         sys.exit(col.build(col.RED, 'No matching boards found'))
-    return selected, why_selected, board_warnings
+    if shard:
+        total = brds.select_shard(why_selected, *shard)
+        selected = brds.get_selected()
+        if not selected:
+            sys.exit(col.build(
+                col.RED, f'No boards in shard {shard[0]}/{shard[1]}: only '
+                f'{total} board{get_plural(total)} selected'))
+        shard += (total,)
+    return selected, why_selected, board_warnings, shard
 
 
 def adjust_args(args, series, selected):
@@ -1080,8 +1105,8 @@ def do_buildman(args, toolchains=None, make_func=None, brds=None,
                 args.threads or multiprocessing.cpu_count())
             brds.parse_all_extended(dbase)
 
-    selected, why_selected, board_warnings = determine_boards(
-        brds, args.terms, col, args.boards, args.exclude)
+    selected, why_selected, board_warnings, shard = determine_boards(
+        brds, args.terms, col, args.boards, args.exclude, args.shard)
 
     if args.print_prefix:
         show_toolchain_prefix(brds, toolchains)
@@ -1100,7 +1125,7 @@ def do_buildman(args, toolchains=None, make_func=None, brds=None,
     if args.dry_run:
         show_actions(series, why_selected, selected, output_dir, board_warnings,
                      args.step, args.threads, args.jobs,
-                     args.verbose)
+                     args.verbose, shard)
         return 0
 
     if args.config_only and args.target:

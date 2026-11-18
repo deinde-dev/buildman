@@ -10,9 +10,35 @@ This creates the argument parser and uses it to parse the arguments passed in
 import argparse
 import os
 import pathlib
+import re
 
 BUILDMAN_DIR = pathlib.Path(__file__).parent
 HAS_TESTS = os.path.exists(BUILDMAN_DIR / "test.py")
+
+def parse_shard(value):
+    """Parse the value of the --shard option
+
+    Args:
+        value (str): Value in the form K/N, e.g. '2/6'
+
+    Returns:
+        tuple:
+            int: Shard to build, numbered from 1
+            int: Number of shards
+
+    Raises:
+        argparse.ArgumentTypeError: The value is not valid
+    """
+    mat = re.fullmatch(r'(\d+)/(\d+)', value)
+    if not mat:
+        raise argparse.ArgumentTypeError(
+            f"'{value}' is not in the form K/N, e.g. 2/6")
+    index, count = int(mat.group(1)), int(mat.group(2))
+    if not 1 <= index <= count:
+        raise argparse.ArgumentTypeError(
+            f"'{value}' is not valid: K must be in the range 1 to N")
+    return index, count
+
 
 def add_upto_m(parser):
     """Add arguments up to 'M'
@@ -197,6 +223,9 @@ def add_after_m(parser):
     parser.add_argument('--lines-code', action='store_true', default=False,
           help='With -s, show the source code of the lines added/removed '
                'from the build by each commit (implies --lines)')
+    parser.add_argument('--shard', type=parse_shard, metavar='K/N',
+          help='Build only shard K of N: after selecting boards, sort them '
+               'by name and keep every Nth one, starting at the Kth')
     parser.add_argument('--skip-unaffected', action='store_true',
           default=True,
           help='Skip building commits which cannot affect a board, based on '

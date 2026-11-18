@@ -164,8 +164,25 @@ multiple times on the command line:
 
   buildman --boards sandbox,snow --boards firefly-rk3399
 
+To split a large build across several machines or CI jobs, use ``--shard K/N``
+to build just one of N shards. After the boards are selected as above,
+including any exclusions, buildman sorts them by target name and keeps every
+Nth board, starting with the Kth. For example, with three jobs:
+
+.. code-block:: bash
+
+  buildman -x xtensa --shard 1/3
+  buildman -x xtensa --shard 2/3
+  buildman -x xtensa --shard 3/3
+
+Between them the jobs build each selected board exactly once, so long as they
+use the same source tree and the same selection. Boards with similar names
+tend to be similar, so taking them at intervals, rather than splitting the
+list into ranges, gives shards which take about the same time to build.
+
 It is convenient to use the -n option to see what will be built based on
-the subset given. Use -v as well to get an actual list of boards.
+the subset given. Use -v as well to get an actual list of boards. With
+``--shard`` this also shows how many boards are in the shard.
 
 Buildman does not store intermediate object files. It optionally copies
 the binary output into a directory when a build is successful (-k). Size
