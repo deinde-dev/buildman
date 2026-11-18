@@ -811,6 +811,29 @@ endif
         self.assertEqual('board0', params['target'])
         self.assertEqual('arm', params['arch'])
 
+    def test_scan_defconfigs_scanner_fails(self):
+        """Test scan_defconfigs() reports a scanner process which fails"""
+        src = self._git_dir
+        config_dir = os.path.join(src, 'configs')
+        count = len(os.listdir(config_dir)) + 1
+
+        # A defconfig with #include needs cpp, so use one which does not
+        # exist, to make the scanner fail
+        bad = os.path.join(config_dir, 'bad_defconfig')
+        tools.write_file(bad, b'#include <configs/board0_defconfig>\n')
+        try:
+            brds = boards.Boards()
+            with mock.patch.dict(os.environ, {'CPP': '/no/such/cpp'}):
+                with terminal.capture():
+                    with self.assertRaises(ValueError) as exc:
+                        brds.scan_defconfigs(config_dir, src, 2)
+        finally:
+            os.remove(bad)
+        self.assertRegex(
+            str(exc.exception),
+            'Board scan failed: 1 of 2 scanner processes failed and '
+            f'[0-9]+ of {count} boards were found')
+
     def test_scan_defconfigs_many_jobs(self):
         """Test scan_defconfigs() limits the number of scanner processes"""
         src = self._git_dir

@@ -10,6 +10,9 @@ Unreleased
 
 Fixed
 ~~~~~
+- The board scan stops with an error if a scanner process fails, or a
+  board is missing from the result, instead of carrying on without the
+  boards which that process was scanning.
 - The board scan uses at most 32 processes. With about 250 or more, as on
   a machine with that many CPUs, the last ones ran out of file
   descriptors which ``select()`` can handle and failed, so that some

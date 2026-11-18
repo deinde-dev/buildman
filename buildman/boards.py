@@ -939,6 +939,9 @@ class Boards:
                         'config'
                     value: string value of the key
                 list of str: List of warnings recorded
+
+        Raises:
+            ValueError: A scanner process failed, or some boards are missing
         """
         all_defconfigs = self._collect_defconfigs(config_dir)
         jobs = min(jobs, MAX_SCAN_JOBS, len(all_defconfigs))
@@ -963,6 +966,15 @@ class Boards:
 
         # retrieve leftover data
         self.read_queues(queues, params_list, warnings)
+
+        # A scanner which fails takes its boards with it, so do not carry on
+        # with what is left
+        failed = [proc for proc in processes if proc.exitcode]
+        if failed or len(params_list) != len(all_defconfigs):
+            raise ValueError(
+                f'Board scan failed: {len(failed)} of {len(processes)} '
+                f'scanner processes failed and {len(params_list)} of '
+                f'{len(all_defconfigs)} boards were found')
 
         return params_list, sorted(list(warnings))
 
