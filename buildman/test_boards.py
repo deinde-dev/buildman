@@ -133,6 +133,17 @@ Active  powerpc  ppc     mpc85xx Tester   PPC1  board2  config2  m@t.co
         self.assertEqual(1, len(warnings))
         self.assertIn('nonexistent', warnings[0])
 
+        # Test select_shard(), with the boards out of order
+        brds3 = boards.Boards()
+        for brd in reversed(BOARDS):
+            brds3.add_board(board.Board(*brd))
+        result, _ = brds3.select_boards(['arm', 'sandbox'])
+        self.assertEqual(3, brds3.select_shard(result, 1, 2))
+        self.assertEqual(['board4', 'board0'], brds3.get_selected_names())
+        self.assertEqual(
+            {'all': ['board4', 'board0'], 'arm': ['board0'],
+             'sandbox': ['board4']}, result)
+
         # Test find_by_target()
         found = brds.find_by_target('board0')
         self.assertEqual('arm', found.arch)

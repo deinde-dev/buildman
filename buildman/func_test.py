@@ -1511,6 +1511,66 @@ endif
         self.assertEqual(['board0', 'board1'],
                          [b.target for b in self._boards.get_selected()])
 
+    def _check_shard(self, expect, *args):
+        """Run buildman with a fresh set of boards and check which are built
+
+        Args:
+            expect (list of str): Expected targets, in the order of BOARDS
+            args (list of str): Arguments to pass
+        """
+        self._boards = boards.Boards()
+        for brd in BOARDS:
+            self._boards.add_board(board.Board(*brd))
+        self._run_control('-o', self._output_dir, *args)
+        self.assertEqual(expect,
+                         [b.target for b in self._boards.get_selected()])
+        self.assertEqual(len(expect), self._builder.count)
+
+    def test_shard(self):
+        """Test building a shard of the selected boards"""
+        self._check_shard(['board0', 'board2'], '--shard', '1/2')
+        self._check_shard(['board1', 'board4'], '--shard', '2/2')
+        self._check_shard(['board0', 'board1', 'board2', 'board4'],
+                          '--shard', '1/1')
+        self._check_shard(['board4'], '--shard', '4/4')
+
+        # The shard is taken after the boards are selected
+        self._check_shard(['board1'], 'arm', '--shard', '2/2')
+        self._check_shard(['board4'], '-x', 'arm', '--shard', '2/2')
+        self._check_shard(['board1'], '--boards', 'board1,board2,board4',
+                          '--shard', '1/3')
+
+        # There must be at least one board in the shard
+        with self.assertRaises(SystemExit) as exc:
+            self._check_shard([], 'powerpc', '--shard', '2/2')
+        self.assertIn('No boards in shard 2/2: only 1 board selected',
+                      str(exc.exception))
+
+    def test_shard_dry_run(self):
+        """Test that a dry run shows the number of boards in the shard"""
+        with terminal.capture() as (stdout, _):
+            self._run_control('-n', '-x', 'powerpc', '--shard', '2/2',
+                              get_builder=False)
+        out = stdout.getvalue()
+        self.assertIn('Building current source for 1 boards', out)
+        self.assertIn('Shard 2/2: 1 of 3 selected boards', out)
+        self.assertIn('Total boards to build for each commit: 1', out)
+
+    def test_shard_bad(self):
+        """Test that an invalid shard is rejected"""
+        for value, msg in (('2', 'is not in the form K/N'),
+                           ('a/b', 'is not in the form K/N'),
+                           ('1/2/3', 'is not in the form K/N'),
+                           ('0/2', 'is not valid: K must be in the range'),
+                           ('3/2', 'is not valid: K must be in the range'),
+                           ('1/0', 'is not valid: K must be in the range')):
+            sys.argv = [sys.argv[0], '--shard', value]
+            with terminal.capture() as (_, stderr):
+                with self.assertRaises(SystemExit):
+                    cmdline.parse_args()
+            self.assertIn(f"argument --shard: '{value}' {msg}",
+                          stderr.getvalue())
+
     def test_single_boards(self):
         """Test building single boards"""
         self._run_control('--boards', 'board1', '-o', self._output_dir)
