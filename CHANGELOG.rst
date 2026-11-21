@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
+Unreleased
+----------
+
+Added
+~~~~~
+- kconfiglib understands the ``phases`` attribute of U-Boot's Kconfig, which
+  defines an option once for several phases. As the C tool does, it reads the
+  phases from ``scripts/xpl_phases`` in the source tree and creates a symbol
+  for each phase of an option, so that the board scan and qconfig work with a
+  tree which uses it. A tree without ``phases`` lines is handled as before.
+
 0.3.1 - 2026-11-18
 ------------------
 
