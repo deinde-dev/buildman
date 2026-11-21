@@ -850,6 +850,9 @@ class Kconfig(object):
 
         # Parsing-related
         "_parsing_kconfigs",
+        "_phase_homes",
+        "_phase_nodes",
+        "_phases",
         "_readline",
         "filename",
         "linenr",
@@ -989,6 +992,13 @@ class Kconfig(object):
         self.syms = {}
         self.const_syms = {}
         self.defined_syms = []
+
+        # U-Boot: Names of the phases, which are read if a 'phases' line is
+        # seen, the entries of each phased option and the entry which holds
+        # the option in each phase
+        self._phases = None
+        self._phase_nodes = {}
+        self._phase_homes = {}
         self.missing_syms = []
         self.named_choices = {}
         self.choices = []
@@ -1092,6 +1102,9 @@ class Kconfig(object):
         # Close the top-level Kconfig file. __self__ fetches the 'file' object
         # for the method.
         self._readline.__self__.close()
+
+        # U-Boot: Create the symbols for options with a 'phases' line
+        self._expand_phases()
 
         self._parsing_kconfigs = False
 
@@ -2372,6 +2385,11 @@ class Kconfig(object):
             self._parse_assignment(s)
             return (None,)
 
+        if token is _T_PHASES:
+            # U-Boot: The rest of the line holds names of phases, which are
+            # not symbols
+            return (token, s[match.end():], None)
+
         tokens = [token]
         # The current index in the string being tokenized
         i = match.end()
@@ -3268,6 +3286,9 @@ class Kconfig(object):
                 else:
                     self._parse_error("unrecognized option")
 
+            elif t0 is _T_PHASES:
+                self._parse_phases(node)
+
             elif t0 is _T_OPTIONAL:
                 if node.item.__class__ is not Choice:
                     self._parse_error('"optional" is only valid for choices')
@@ -3557,6 +3578,479 @@ class Kconfig(object):
     # Post-parsing menu tree processing, including dependency propagation and
     # implicit submenu creation
     #
+
+    #
+    # U-Boot: options which are defined once for several phases
+    #
+    # A config entry can have a 'phases' line, listing the phases in which the
+    # option exists, e.g. 'phases ppl spl'. Each phase has its own symbol: the
+    # one for the primary phase has the name of the option and the others have
+    # the name of the phase as a prefix, e.g. SPL_FOO. The entry refers to
+    # other options by their base name, which means the symbol for the same
+    # phase in each case.
+    #
+    # The phases are listed in scripts/xpl_phases in the source tree. This
+    # follows scripts/kconfig/phase.c in U-Boot.
+    #
+
+    def _read_phases(self):
+        # Reads the list of phases from scripts/xpl_phases in the source tree,
+        # returning their upper-case names with the primary phase first. Bit N
+        # of a phase mask selects the phase at index N.
+        #
+        # Each line has the name of a phase, its devicetree tag and optional
+        # flags. The phase with the 'primary' flag is the primary one.
+
+        if self._phases is not None:
+            return self._phases
+
+        fname = join(self.srctree, "scripts", "xpl_phases")
+        try:
+            with open(fname, encoding="utf-8") as f:
+                lines = f.readlines()
+        except EnvironmentError as e:
+            self._parse_error("'phases' needs the list of phases, but {} "
+                              "cannot be read: {}".format(fname, e.strerror))
+
+        primary = None
+        names = []
+        for line in lines:
+            fields = line.split("#")[0].split()
+            if len(fields) < 2:
+                continue
+            if "primary" in fields[2:]:
+                primary = fields[0].upper()
+            else:
+                names.append(fields[0].upper())
+        if not primary:
+            self._parse_error("{} has no primary phase".format(fname))
+
+        self._phases = [primary] + names
+        return self._phases
+
+    def _parse_phases(self, node):
+        # Parses the phase names on a 'phases' line, adding them to
+        # node.phases. A '!' before a name leaves that phase out, starting
+        # from every phase if nothing is selected yet.
+
+        if node.item.__class__ is not Symbol:
+            self._parse_error("'phases' is only supported in a config entry")
+
+        names = self._read_phases()
+        every = (1 << len(names)) - 1
+        words = self._tokens[1].split("#")[0].replace("!", " !").split()
+        if not words:
+            self._parse_error("expected a phase after 'phases'")
+
+        negate = False
+        for word in words:
+            if word == "!":
+                negate = True
+                continue
+            if word[0] == "!":
+                negate = True
+                word = word[1:]
+            if word == "all":
+                mask = every
+            elif word.upper() in names and word == word.lower():
+                mask = 1 << names.index(word.upper())
+            else:
+                self._parse_error("unknown phase '{}'".format(word))
+
+            if negate:
+                if not node.phases:
+                    node.phases = every
+                node.phases &= ~mask
+                if not node.phases:
+                    self._parse_error(
+                        "'phases' leaves the option with no phases")
+            else:
+                node.phases |= mask
+            negate = False
+
+    def _phase_error(self, node, msg):
+        # Reports an error in a menu node. An 'if' node has no location.
+
+        if getattr(node, "filename", None):
+            msg = "{}:{}: error: {}".format(node.filename, node.linenr, msg)
+        raise KconfigError(msg)
+
+    def _phase_collect(self, node, in_choice):
+        # Collects the phases of each symbol in the list starting at 'node',
+        # and the phases used inside each menu and 'if' block, so that one
+        # with nothing for a phase can be skipped. Returns the phases used in
+        # the list.
+
+        mask = 0
+        while node:
+            item = node.item
+            if item.__class__ is Symbol and node.phases:
+                if in_choice:
+                    self._phase_error(
+                        node, "'phases' is not supported in a choice")
+                item.phases |= node.phases
+                mask |= node.phases
+            if node.list:
+                inside = self._phase_collect(
+                    node.list, in_choice or item.__class__ is Choice)
+                if item is None or item is MENU:
+                    node.phases = inside
+                mask |= inside
+            node = node.next
+
+        return mask
+
+    def _phase_check(self, sym):
+        # Checks that the entries of a phased option can be supported: each
+        # needs a 'phases' line, so that it is clear which phases it applies
+        # to, and a symbol which the option creates cannot have an entry of
+        # its own.
+
+        names = self._phases
+        for node in sym.nodes:
+            if not node.phases:
+                self._phase_error(
+                    node, "'{}' has phases, so each of its entries needs a "
+                    "'phases' line".format(sym.name))
+        for phase in range(1, len(names)):
+            if not sym.phases & (1 << phase):
+                continue
+            inst = self.syms.get("{}_{}".format(names[phase], sym.name))
+            if inst and inst.nodes:
+                self._phase_error(
+                    inst.nodes[0], "'{}' comes from the phases of '{}', so "
+                    "cannot have an entry".format(inst.name, sym.name))
+
+    def _phase_home(self, sym, phase):
+        # Returns the entry which holds a phased option in a phase. Where an
+        # option has several entries for a phase, they are combined into one,
+        # which takes the place of the first entry with a prompt, or the first
+        # of all if none has one. Returns None if it is not in the phase.
+
+        key = sym, phase
+        if key not in self._phase_homes:
+            entries = [node for node in self._phase_nodes[sym]
+                       if node.phases & (1 << phase)]
+            home = None
+            for node in entries:
+                if node.prompt:
+                    home = node
+                    break
+            if not home and entries:
+                home = entries[0]
+            self._phase_homes[key] = home
+
+        return self._phase_homes[key]
+
+    def _phase_xlate_sym(self, sym, phase, node, value=False):
+        # Returns the symbol which an entry means in a phase, given the one
+        # which it mentions.
+        #
+        # An option with phases means the symbol for that phase, or 'n' if it
+        # is not in the phase. An option with a single symbol means its twin,
+        # e.g. SPL_FOO, if one is written out by hand. If only some other
+        # phase has a twin, the option is not passed to this phase, so it is
+        # 'n'. Otherwise it is the same in every phase. A name with the prefix
+        # of the primary phase, e.g. PPL_FOO, means the symbol in that phase.
+        #
+        # With 'value', the value of the symbol is needed, so it is an error
+        # if it is not in the phase.
+
+        if sym.__class__ is not Symbol or sym.is_constant:
+            return sym
+
+        names = self._phases
+        prefix = names[0] + "_"
+        if sym.name.startswith(prefix) and not sym.nodes:
+            twin = self.syms.get(sym.name[len(prefix):])
+            return twin if twin and twin.nodes else sym
+
+        if sym.phases:
+            if not sym.phases & (1 << phase):
+                res = self.n
+            elif phase:
+                res = self._lookup_sym("{}_{}".format(names[phase], sym.name))
+            else:
+                res = sym
+        elif not phase:
+            res = sym
+        else:
+            res = sym
+            twin = self.syms.get("{}_{}".format(names[phase], sym.name))
+            if twin and twin.nodes:
+                res = twin
+            else:
+                # This includes a twin for the host tools
+                for name in names[1:] + ["TOOLS"]:
+                    twin = self.syms.get("{}_{}".format(name, sym.name))
+                    if twin and twin.nodes:
+                        res = self.n
+                        break
+
+        if value and res is self.n:
+            self._phase_error(
+                node, "'{}' is not in the {} phase, so its value cannot be "
+                "used".format(sym.name, names[phase]))
+
+        return res
+
+    def _phase_xlate_expr(self, expr, phase, node):
+        # Returns a copy of an expression as it applies in a phase
+
+        if expr.__class__ is not tuple:
+            return self._phase_xlate_sym(expr, phase, node)
+        if expr[0] is NOT:
+            return (NOT, self._phase_xlate_expr(expr[1], phase, node))
+        if expr[0] is AND or expr[0] is OR:
+            return (expr[0], self._phase_xlate_expr(expr[1], phase, node),
+                    self._phase_xlate_expr(expr[2], phase, node))
+
+        # A comparison, which needs the value of each symbol
+        return (expr[0], self._phase_xlate_sym(expr[1], phase, node, True),
+                self._phase_xlate_sym(expr[2], phase, node, True))
+
+    def _phase_new_node(self, org, item):
+        # Returns a new menu node for 'item', at the same place as 'org'
+
+        node = MenuNode()
+        node.item = item
+        node.prompt = node.help = node.list = node.next = node.parent = None
+        node.dep = self.y
+        if item is not None:
+            node.kconfig = self
+            node.is_menuconfig = org.is_menuconfig
+            node.filename = org.filename
+            node.linenr = org.linenr
+            node.include_path = org.include_path
+
+        return node
+
+    def _phase_add_entry(self, node, org, phase, home):
+        # Adds what the phased entry 'org' has to 'node', the entry for a
+        # phase. 'home' is True if 'node' takes the place of 'org' in the
+        # menu tree.
+        #
+        # A 'depends on' applies to the whole option, but the menus and 'if'
+        # blocks around an entry which is not the home apply only to what
+        # that entry adds.
+
+        sym = node.item
+        base = org.item
+        names = self._phases
+        outer = self.y
+        if not home:
+            parent = org.parent
+            while parent is not self.top_node:
+                outer = self._make_and(
+                    self._phase_xlate_expr(parent.dep, phase, parent), outer)
+                parent = parent.parent
+            node.dep = self._make_and(
+                node.dep, self._phase_xlate_expr(org.dep, phase, org))
+            if node.help is None:
+                node.help = org.help
+
+        def cond(expr):
+            return self._make_and(self._phase_xlate_expr(expr, phase, org),
+                                  outer)
+
+        if org.prompt:
+            if node.prompt:
+                self._warn("prompt redefined", org.filename, org.linenr)
+            else:
+                node.prompt = (org.prompt[0], cond(org.prompt[1]))
+
+        # The default of an option which is not a bool is a value
+        is_value = sym.orig_type not in _BOOL_TRISTATE
+        for default, expr in org.defaults:
+            if default.__class__ is tuple:
+                default = self._phase_xlate_expr(default, phase, org)
+            else:
+                default = self._phase_xlate_sym(default, phase, org, is_value)
+            node.defaults.append((default, cond(expr)))
+
+        for low, high, expr in org.ranges:
+            node.ranges.append(
+                (self._phase_xlate_sym(low, phase, org, True),
+                 self._phase_xlate_sym(high, phase, org, True), cond(expr)))
+
+        # Show a warning once, for the first xPL phase of the entry
+        first = phase and not org.phases & ((1 << phase) - 2)
+        for org_list, new_list, verb in ((org.selects, node.selects, "selects"),
+                                         (org.implies, node.implies, "implies")):
+            for target, expr in org_list:
+                xlate = self._phase_xlate_sym(target, phase, org)
+                if xlate is self.n:
+                    continue
+
+                # Selecting an option with a single symbol from an xPL phase
+                # enables it in every phase
+                if first and xlate is target:
+                    self._warn(
+                        "'{}' {} '{}', which is the same in every phase: use "
+                        "'{}_{}' if this is intended".format(
+                            base.name, verb, target.name, names[0],
+                            target.name), org.filename, org.linenr)
+                new_list.append((xlate, cond(expr)))
+
+    def _phase_clone_entry(self, org, phase):
+        # Creates the entry for one phase's symbol, from 'org', the entry
+        # which holds the option in that phase, combining the option's other
+        # entries for the phase into it. For the primary phase the symbol is
+        # that of the entry itself.
+
+        base = org.item
+        if phase:
+            sym = self._lookup_sym(
+                "{}_{}".format(self._phases[phase], base.name))
+            if not sym.orig_type:
+                sym.orig_type = base.orig_type
+            elif base.orig_type and sym.orig_type is not base.orig_type:
+                self._warn("type of '{}' differs from '{}'".format(
+                    sym.name, base.name), org.filename, org.linenr)
+        else:
+            sym = base
+
+        node = self._phase_new_node(org, sym)
+        node.dep = self._phase_xlate_expr(org.dep, phase, org)
+        node.help = org.help
+        for entry in self._phase_nodes[base]:
+            if entry.phases & (1 << phase):
+                self._phase_add_entry(node, entry, phase, entry is org)
+        sym.nodes.append(node)
+        if phase:
+            self.defined_syms.append(sym)
+
+        return node
+
+    def _phase_clone_list(self, org, parent, phase):
+        # Copies the parts of the list starting at 'org' which are in a
+        # phase, with each entry in a copy of the menus and 'if' blocks which
+        # enclose the original. Returns the first node of the new list, or
+        # None if there is nothing for the phase.
+
+        bit = 1 << phase
+        head = prev = None
+        while org:
+            node = None
+            item = org.item
+            if item.__class__ is Symbol:
+                if org.phases & bit and self._phase_home(item, phase) is org:
+                    node = self._phase_clone_entry(org, phase)
+            elif (item is None or item is MENU) and org.phases & bit:
+                node = self._phase_new_node(org, item)
+                node.dep = self._phase_xlate_expr(org.dep, phase, org)
+                node.list = self._phase_clone_list(org.list, node, phase)
+                if not node.list:
+                    node = None
+                elif item is MENU:
+                    node.prompt = (org.prompt[0], self._phase_xlate_expr(
+                        org.prompt[1], phase, org))
+                    node.visibility = self._phase_xlate_expr(
+                        org.visibility, phase, org)
+                    self.menus.append(node)
+            if node:
+                node.parent = parent
+                if prev:
+                    prev.next = node
+                else:
+                    head = node
+                prev = node
+            org = org.next
+
+        return head
+
+    def _phase_fix_primary(self, parent):
+        # Updates the phased entries under 'parent' for the primary phase.
+        # The entry which holds each option is replaced with a copy which is
+        # translated for the primary phase. The other entries are removed,
+        # since they are combined into it, along with any which do not
+        # include the primary phase.
+
+        prev = None
+        org = parent.list
+        while org:
+            node = org
+            if org.item.__class__ is Symbol and org.phases:
+                node = None
+                if self._phase_home(org.item, 0) is org:
+                    node = self._phase_clone_entry(org, 0)
+                    node.parent = parent
+            elif org.list:
+                self._phase_fix_primary(org)
+            if node:
+                if prev:
+                    prev.next = node
+                else:
+                    parent.list = node
+                prev = node
+            org = org.next
+
+        if prev:
+            prev.next = None
+        else:
+            parent.list = None
+
+    def _expand_phases(self):
+        # Creates the symbols and menus for the phased entries. This is called
+        # once the Kconfig files are parsed, before the menu tree is
+        # finalised. For each phase other than the primary one it adds a menu
+        # at the end of the main menu, holding that phase's version of each
+        # phased entry.
+
+        if self._phases is None:
+            return
+        if not self._phase_collect(self.top_node.list, False):
+            return
+
+        syms = [sym for sym in _ordered_unique(self.defined_syms)
+                if sym.phases]
+        for sym in syms:
+            self._phase_check(sym)
+        self._phase_nodes = {sym: sym.nodes for sym in syms}
+
+        names = self._phases
+        mirrors = []
+        for phase in range(1, len(names)):
+            menu = self._phase_new_node(self.top_node, MENU)
+            menu.list = self._phase_clone_list(self.top_node.list, menu,
+                                               phase)
+            if not menu.list:
+                continue
+            menu.prompt = ("{} phase options".format(names[phase]), self.y)
+            menu.visibility = self.y
+            menu.parent = self.top_node
+
+            # The options of a phase depend on the phase being enabled
+            sym = self.syms.get(names[phase])
+            if sym and sym.nodes:
+                menu.dep = sym
+            self.menus.append(menu)
+            mirrors.append(menu)
+
+        # The entries for the primary phase replace the originals
+        for sym in syms:
+            sym.nodes = []
+        self._phase_fix_primary(self.top_node)
+        for sym in syms:
+            home = self._phase_homes.get((sym, 0))
+            if home:
+                continue
+
+            # An option which is not in the primary phase has no symbol there
+            sym.orig_type = UNKNOWN
+            self.defined_syms = [item for item in self.defined_syms
+                                 if item is not sym]
+
+        node = self.top_node.list
+        if mirrors:
+            for menu, nxt in zip(mirrors, mirrors[1:] + [None]):
+                menu.next = nxt
+            if node:
+                while node.next:
+                    node = node.next
+                node.next = mirrors[0]
+            else:
+                self.top_node.list = mirrors[0]
 
     def _finalize_node(self, node, visible_if):
         # Finalizes a menu node and its children:
@@ -4264,6 +4758,7 @@ class Symbol(object):
         "name",
         "nodes",
         "orig_type",
+        "phases",
         "ranges",
         "rev_dep",
         "selects",
@@ -4779,6 +5274,10 @@ class Symbol(object):
         Symbol constructor -- not intended to be called directly by Kconfiglib
         clients.
         """
+        # U-Boot: Mask of the phases in which the option exists, if it has a
+        # 'phases' line; 0 if it is the same in every phase
+        self.phases = 0
+
         # These attributes are always set on the instance from outside and
         # don't need defaults:
         #   kconfig
@@ -5625,6 +6124,7 @@ class MenuNode(object):
         "list",
         "next",
         "parent",
+        "phases",
         "prompt",
         "visibility",
 
@@ -5643,6 +6143,10 @@ class MenuNode(object):
         self.selects = []
         self.implies = []
         self.ranges = []
+
+        # U-Boot: Mask of the phases from the 'phases' line, 0 if none. For
+        # a menu or 'if' block, the phases of the entries inside it
+        self.phases = 0
 
     @property
     def orig_prompt(self):
@@ -6906,7 +7410,8 @@ except AttributeError:
     _T_TRISTATE,
     _T_UNEQUAL,
     _T_VISIBLE,
-) = range(1, 51)
+    _T_PHASES,
+) = range(1, 52)
 
 # Keyword to token map, with the get() method assigned directly as a small
 # optimization
@@ -6944,6 +7449,7 @@ _get_keyword = {
     "on":             _T_ON,
     "option":         _T_OPTION,
     "optional":       _T_OPTIONAL,
+    "phases":         _T_PHASES,
     "orsource":       _T_ORSOURCE,
     "osource":        _T_OSOURCE,
     "prompt":         _T_PROMPT,
