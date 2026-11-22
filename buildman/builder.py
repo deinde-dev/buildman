@@ -22,6 +22,7 @@ import time
 
 from buildman import builderthread
 from buildman import dtcache
+from buildman import xpl
 from buildman.cfgutil import Config, process_config
 from buildman.outcome import (DisplayOptions, Outcome,
                               OUTCOME_OK, OUTCOME_WARNING, OUTCOME_ERROR,
@@ -158,15 +159,46 @@ u-boot/             source directory
 # Translate a commit subject into a valid filename (and handle unicode)
 trans_valid_chars = str.maketrans('/: ', '---')
 
-BASE_CONFIG_FILENAMES = [
-    'u-boot.cfg', 'u-boot-spl.cfg', 'u-boot-tpl.cfg'
-]
 
-EXTRA_CONFIG_FILENAMES = [
-    '.config', '.config-spl', '.config-tpl',
-    'autoconf.mk', 'autoconf-spl.mk', 'autoconf-tpl.mk',
-    'autoconf.h', 'autoconf-spl.h','autoconf-tpl.h',
-]
+def config_filenames(phases, squash_config_y):
+    """Get the config files to read back from each build, for -C
+
+    These are the names which builderthread.copy_files() writes, with a
+    suffix for each xPL phase
+
+    Args:
+        phases (tuple of str): xPL phases, e.g. ('tpl', 'vpl', 'spl')
+        squash_config_y (bool): True to read only the u-boot.cfg files
+
+    Returns:
+        list of str: Filenames, e.g. ['u-boot.cfg', 'u-boot-spl.cfg']
+    """
+    names = ['u-boot.cfg'] + [f'u-boot-{phase}.cfg' for phase in phases]
+    if not squash_config_y:
+        for base, ext in [('.config', ''), ('autoconf', '.mk'),
+                          ('autoconf', '.h')]:
+            names.append(base + ext)
+            names += [f'{base}-{phase}{ext}' for phase in phases]
+    return names
+
+
+def all_phases(git_dir):
+    """Get the xPL phases which any commit being built may have
+
+    The phases are read from the source tree, i.e. the checkout which holds
+    git_dir. Older commits may lack scripts/xpl_phases, so the default phases
+    are included too
+
+    Args:
+        git_dir (str): Path to the .git directory of the source tree, or None
+
+    Returns:
+        tuple of str: Names of the phases
+    """
+    phases = xpl.read_phases(os.path.dirname(git_dir) if git_dir else None)
+    return phases + tuple(phase for phase in xpl.DEFAULT_PHASES
+                          if phase not in phases)
+
 
 class Environment:
     """Holds information about environment variables for a board."""
@@ -417,7 +449,8 @@ class Builder:
         self.verbose_build = verbose_build
         self.config_only = config_only
         self.squash_config_y = squash_config_y
-        self.config_filenames = BASE_CONFIG_FILENAMES
+        self.config_filenames = config_filenames(all_phases(git_dir),
+                                                 squash_config_y)
         self.work_in_output = work_in_output
         self.adjust_cfg = adjust_cfg
         self.allow_missing = allow_missing
@@ -463,8 +496,6 @@ class Builder:
         self._commit_files_lock = threading.Lock()
         self.build_target = build_target
 
-        if not self.squash_config_y:
-            self.config_filenames += EXTRA_CONFIG_FILENAMES
         self._terminated = False
         self._restarting_config = False
 

@@ -18,6 +18,7 @@ from unittest import mock
 from u_boot_pylib.command import CommandExc, CommandResult
 
 from buildman import worker
+from buildman import xpl
 
 
 def _parse(line):
@@ -127,7 +128,7 @@ class TestUtilityFunctions(unittest.TestCase):
     def test_get_sizes_no_elf(self):
         """Test with no ELF file"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            self.assertEqual(worker._get_sizes(tmpdir), {})
+            self.assertEqual(worker._get_sizes(tmpdir, xpl.DEFAULT_PHASES), {})
 
     @mock.patch('buildman.worker.subprocess.Popen')
     def test_get_sizes_with_elf(self, mock_popen):
@@ -156,7 +157,8 @@ class TestUtilityFunctions(unittest.TestCase):
                           encoding='utf-8') as fout:
                     fout.write('fake')
             env = {b'PATH': b'/toolchain/bin'}
-            sizes = worker._get_sizes(tmpdir, 'aarch64-linux-', env)
+            sizes = worker._get_sizes(tmpdir, xpl.DEFAULT_PHASES,
+                                       'aarch64-linux-', env)
             self.assertEqual(
                 {'raw': '  12345    1234     567   14146    374a u-boot 00001234\n'
                         '  12345    1234     567   14146    374a '
@@ -168,6 +170,22 @@ class TestUtilityFunctions(unittest.TestCase):
                 calls[1])
 
     @mock.patch('buildman.worker.subprocess.Popen')
+    def test_get_sizes_phases(self, mock_popen):
+        """Test that only the tree's phases are sized"""
+        mock_popen.return_value = mock.Mock(returncode=0)
+        mock_popen.return_value.communicate.return_value = (
+            b'   text    data     bss     dec     hex filename\n'
+            b'      1       2       3       6       6 mon/u-boot-mon\n', b'')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, 'mon'))
+            with open(os.path.join(tmpdir, 'mon', 'u-boot-mon'), 'w',
+                      encoding='utf-8') as fout:
+                fout.write('fake')
+            self.assertEqual({}, worker._get_sizes(tmpdir, xpl.DEFAULT_PHASES))
+            sizes = worker._get_sizes(tmpdir, ('mon',))
+            self.assertIn('mon/u-boot-mon', sizes['raw'])
+
+    @mock.patch('buildman.worker.subprocess.Popen')
     def test_get_sizes_size_fails(self, mock_popen):
         """Test when size exits with an error"""
         mock_popen.return_value = mock.Mock(returncode=1)
@@ -176,7 +194,7 @@ class TestUtilityFunctions(unittest.TestCase):
             elf = os.path.join(tmpdir, 'u-boot')
             with open(elf, 'w', encoding='utf-8') as fout:
                 fout.write('fake')
-            self.assertEqual(worker._get_sizes(tmpdir), {})
+            self.assertEqual(worker._get_sizes(tmpdir, xpl.DEFAULT_PHASES), {})
 
     @mock.patch('buildman.worker.subprocess.Popen',
                 side_effect=OSError('no size'))
@@ -186,7 +204,7 @@ class TestUtilityFunctions(unittest.TestCase):
             elf = os.path.join(tmpdir, 'u-boot')
             with open(elf, 'w', encoding='utf-8') as fout:
                 fout.write('fake')
-            self.assertEqual(worker._get_sizes(tmpdir), {})
+            self.assertEqual(worker._get_sizes(tmpdir, xpl.DEFAULT_PHASES), {})
 
     def test_get_config(self):
         """Test reading generated config files from a build dir"""
@@ -194,19 +212,19 @@ class TestUtilityFunctions(unittest.TestCase):
             with open(os.path.join(tmpdir, '.config'), 'w',
                       encoding='utf-8') as fout:
                 fout.write('CONFIG_FOO=y\n')
-            config = worker._get_config(tmpdir)
+            config = worker._get_config(tmpdir, xpl.DEFAULT_PHASES)
             self.assertEqual(config['.config'], 'CONFIG_FOO=y\n')
 
     def test_get_config_empty(self):
         """Test with no config files present"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            self.assertEqual(worker._get_config(tmpdir), {})
+            self.assertEqual(worker._get_config(tmpdir, xpl.DEFAULT_PHASES), {})
 
     @mock.patch('buildman.worker.builderthread.config_file_map',
                 return_value={'.config': '/nonexistent/dir/.config'})
     def test_get_config_unreadable(self, _mock):
         """Test that an unreadable config file is skipped"""
-        self.assertEqual(worker._get_config('/x'), {})
+        self.assertEqual(worker._get_config('/x', xpl.DEFAULT_PHASES), {})
 
 
 class TestCmdSetup(_ProtoTestBase):
@@ -479,7 +497,8 @@ class TestWorkerBuilderThread(_ProtoTestBase):
         result = mock.Mock(
             brd=mock.Mock(target='sandbox'),
             commit_upto=0, return_code=0,
-            stderr='', stdout='', out_dir='/nonexistent')
+            stderr='', stdout='', out_dir='/nonexistent',
+            src_dir='/nonexistent')
         thread._send_result(result)
         self.assert_resp('resp', 'build_result')
         self.assert_resp('board', 'sandbox')
@@ -491,7 +510,8 @@ class TestWorkerBuilderThread(_ProtoTestBase):
         result = mock.Mock(
             brd=mock.Mock(target='sandbox'),
             commit_upto=0, return_code=0,
-            stderr='', stdout='', out_dir='/nonexistent')
+            stderr='', stdout='', out_dir='/nonexistent',
+            src_dir='/nonexistent')
         with mock.patch.object(thread, '_scan_lines',
                                return_value='common/board_f.c: 1-9\n'):
             thread._send_result(result)
@@ -504,7 +524,8 @@ class TestWorkerBuilderThread(_ProtoTestBase):
         result = mock.Mock(
             brd=mock.Mock(target='sandbox'),
             commit_upto=0, return_code=2,
-            stderr='error', stdout='', out_dir='/nonexistent')
+            stderr='error', stdout='', out_dir='/nonexistent',
+            src_dir='/nonexistent')
         with mock.patch('buildman.worker._get_config',
                         return_value={'.config': 'CONFIG_FOO=y\n'}):
             thread._send_result(result)

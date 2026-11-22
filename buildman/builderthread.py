@@ -19,6 +19,7 @@ import time
 
 from buildman import cfgutil
 from buildman import depscan
+from buildman import xpl
 from u_boot_pylib import command
 from u_boot_pylib import dwarf_lines
 from u_boot_pylib import gitutil
@@ -53,7 +54,6 @@ BuildSetup = namedtuple('BuildSetup', ['env', 'args', 'config_args', 'cwd',
                                        'src_dir'])
 
 RETURN_CODE_RETRY = -1
-BASE_ELF_FILENAMES = ['u-boot', 'spl/u-boot-spl', 'tpl/u-boot-tpl']
 
 # Per-commit cache for the kconfig_changed_since() result.  The answer only
 # depends on the commit (did any Kconfig file change since the previous
@@ -174,18 +174,19 @@ def get_rodata_size(objdump):
     return ''
 
 
-def _remove_old_outputs(out_dir):
+def _remove_old_outputs(out_dir, phases):
     """Remove any old output-target files
 
     Args:
         out_dir (str): Output directory for the build, or None for current dir
+        phases (tuple of str): xPL phases of the tree being built
 
     Since we use a build directory that was previously used by another
     board, it may have produced an SPL image. If we don't remove it (i.e.
     see do_config and self.mrproper below) then it will appear to be the
     output of this build, even if it does not produce SPL images.
     """
-    for elf in BASE_ELF_FILENAMES:
+    for elf in xpl.elf_filenames(phases):
         fname = os.path.join(out_dir or '', elf)
         if os.path.exists(fname):
             os.remove(fname)
@@ -212,31 +213,41 @@ def copy_files(out_dir, build_dir, dirname, patterns):
             shutil.copy(fname, os.path.join(build_dir, target))
 
 
-# Config files preserved from each build, relative to the build directory.
-# copy_files() writes these into the output for every board so that -C can
-# diff config across commits
-CONFIG_FILE_PATTERNS = [
-    'u-boot.cfg', 'spl/u-boot-spl.cfg', 'tpl/u-boot-tpl.cfg',
-    '.config', 'include/autoconf.mk', 'include/generated/autoconf.h',
-]
+def config_file_patterns(phases):
+    """Get the config files preserved from each build
+
+    copy_files() writes these into the output for every board so that -C can
+    diff config across commits
+
+    Args:
+        phases (tuple of str): xPL phases of the tree being built
+
+    Returns:
+        list of str: Filenames relative to the build directory
+    """
+    return ['u-boot.cfg'] + [f'{phase}/u-boot-{phase}.cfg'
+                             for phase in phases] + [
+        '.config', 'include/autoconf.mk', 'include/generated/autoconf.h']
 
 
-def config_file_map(out_dir):
+def config_file_map(out_dir, phases):
     """Map config files present in a build to their output names
 
-    Applies the same '-spl'/'-tpl' renaming as copy_files() so the files
-    land under the names buildman reads back. Used by the distributed
-    worker, which must send file contents rather than copy them.
+    Applies the same phase-suffix renaming as copy_files(), e.g. '-spl', so
+    the files land under the names buildman reads back. Used by the
+    distributed worker, which must send file contents rather than copy them.
 
     Args:
         out_dir (str): Build output directory to scan
+        phases (tuple of str): xPL phases of the tree being built
 
     Returns:
         dict: Keyed by output filename, with the source path as the value
     """
     result = {}
-    for dirname in ['', 'spl', 'tpl']:
-        for pattern in CONFIG_FILE_PATTERNS:
+    patterns = config_file_patterns(phases)
+    for dirname in ['', *phases]:
+        for pattern in patterns:
             for fname in glob.glob(os.path.join(out_dir, dirname, pattern)):
                 target = os.path.basename(fname)
                 if dirname:
@@ -603,7 +614,7 @@ class BuilderThread(threading.Thread):
         if req.fragments is not None:
             config_args.extend(req.fragments.split(','))
 
-        _remove_old_outputs(out_dir)
+        _remove_old_outputs(out_dir, xpl.read_phases(src_dir))
 
         return BuildSetup(env, args, config_args, cwd, src_dir)
 
@@ -1007,7 +1018,7 @@ class BuilderThread(threading.Thread):
                 print(' '.join(cmd), file=outf)
 
         lines = []
-        for fname in BASE_ELF_FILENAMES:
+        for fname in xpl.elf_filenames(xpl.read_phases(result.src_dir)):
             line = self._process_elf_file(result, fname, env)
             if line:
                 lines.append(line)
@@ -1066,10 +1077,11 @@ class BuilderThread(threading.Thread):
         # drop out of SPL while still being compiled into U-Boot proper. The
         # xPL objects live under a directory named after the phase, and their
         # entries get the phase as a prefix, e.g. 'spl:common/spl/spl.c'
+        phases = xpl.read_phases(src_dir)
         phase_objs = {}
         for obj in dwarf_lines.find_object_files(result.out_dir):
             top = os.path.relpath(obj, result.out_dir).split(os.sep)[0]
-            phase = top if top in dwarf_lines.XPL_DIRS else ''
+            phase = top if top in phases else ''
             phase_objs.setdefault(phase, []).append(obj)
         out = []
         for phase, objs in sorted(phase_objs.items()):
@@ -1157,16 +1169,18 @@ class BuilderThread(threading.Thread):
             tools.write_file(done_file, '2\n', binary=False)
 
         if not work_in_output:
-            # Write out the configuration files, with a special case for SPL
-            for dirname in ['', 'spl', 'tpl']:
-                copy_files(result.out_dir, build_dir, dirname,
-                           CONFIG_FILE_PATTERNS)
+            # Write out the configuration files, with a special case for xPL.
+            # A build which failed to find a toolchain has no source dir
+            phases = xpl.read_phases(getattr(result, 'src_dir', None))
+            patterns = config_file_patterns(phases)
+            for dirname in ['', *phases]:
+                copy_files(result.out_dir, build_dir, dirname, patterns)
 
             # Now write the actual build output
             if keep_outputs:
                 to_copy = ['u-boot*', '*.map', 'MLO', 'SPL',
-                           'include/autoconf.mk', 'spl/u-boot-spl*',
-                           'tpl/u-boot-tpl*', 'vpl/u-boot-vpl*']
+                           'include/autoconf.mk']
+                to_copy += [f'{phase}/u-boot-{phase}*' for phase in phases]
                 to_copy += [f'*{ext}' for ext in COMMON_EXTS]
                 copy_files(result.out_dir, build_dir, '', to_copy)
 
