@@ -1,4 +1,5 @@
 concurrencytest==0.1.12
 coverage==7.16.2
-filelock==4.1.0
+filelock==4.1.0; python_version < "3.11"
+filelock==4.2.10; python_version >= "3.11"
 u-boot-pylib==0.1.0
