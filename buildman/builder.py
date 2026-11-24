@@ -18,6 +18,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 
 from buildman import builderthread
 from buildman import dtcache
@@ -52,6 +53,9 @@ RE_NOTE = re.compile(
     r'(.*):(\d*):(\d*): note: this is the location of the previous.*')
 RE_MIGRATION_WARNING = re.compile(r'^={21} WARNING ={22}\n.*\n=+\n',
                                   re.MULTILINE | re.DOTALL)
+# Time between progress lines when there is no terminal (seconds)
+PROGRESS_PERIOD = 60
+
 RE_MAKE_ERR = re.compile('(make.*Waiting for unfinished)|(Segmentation fault)')
 
 # Symbol types which appear in the bloat feature (-B). Others are silently
@@ -151,6 +155,22 @@ class Environment:
             value (str): Environment variable value
         """
         self.environment[key] = value
+
+def have_terminal():
+    """Check whether progress can be shown by overwriting a line
+
+    Returns:
+        bool: True if the output goes to a terminal (or tests are collecting
+            it), False if it goes somewhere else, e.g. a file or a pipe
+    """
+    if terminal.print_test_mode:
+        return True
+    try:
+        return terminal.have_terminal()
+    except (AttributeError, OSError, ValueError):
+        # stdout has been replaced with something which has no file
+        return False
+
 
 class Builder:
     """Class for building U-Boot for a particular commit.
@@ -412,6 +432,12 @@ class Builder:
         self.timestamps = collections.deque()
         self.verbose = False
         self.progress = ''
+
+        # Progress is normally shown on a single line, which is overwritten
+        # as each build finishes. That needs a terminal: when the output goes
+        # to a file or a CI log, show a line only every so often
+        self._progress_period = 0 if have_terminal() else PROGRESS_PERIOD
+        self._last_progress = None
 
         # True when building across remote machines, so the progress line
         # tags local builds with [local] to tell them apart from remote ones
@@ -726,9 +752,21 @@ class Builder:
             line += f'{target} [local]'
         else:
             line += f'{target}'
-        if not self._opts.ide:
+        if self._opts.ide:
+            return
+        if not self._progress_period:
             terminal.print_clear()
             tprint(line, newline=False, limit_to_line=True)
+            return
+
+        # Show the final state, but otherwise wait until enough time has
+        # passed since the start of the build, or the last line shown
+        now = time.monotonic()
+        if self._last_progress is None:
+            self._last_progress = now
+        if not remaining or now - self._last_progress >= self._progress_period:
+            self._last_progress = now
+            tprint(line[1:])
 
     def get_output_dir(self, commit_upto):
         """Get the name of the output directory for a commit number

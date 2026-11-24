@@ -1571,6 +1571,11 @@ If there are both warnings and errors, errors win, so Buildman returns 100.
 The -y option is provided (for use with -s) to ignore the bountiful device-tree
 warnings. Similarly, -Y tells Buildman to ignore the migration warnings.
 
+Buildman shows its progress on a single line, which it updates as each build
+finishes. This needs a terminal. When the output goes somewhere else, such as
+a file or a CI log, Buildman instead shows a line of progress at most once a
+minute, with another when the build finishes.
+
 When some boards cannot be built (e.g. because a toolchain is missing),
 Buildman can report which boards were skipped. Use ``--show-not-built`` to
 enable this. It is off by default since it adds noise when building series

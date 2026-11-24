@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
+Unreleased
+----------
+
+Changed
+~~~~~~~
+- When the output is not a terminal, e.g. in a CI log, a line of progress is
+  shown at most once a minute and when the build finishes, instead of one for
+  each build. The line cannot be overwritten there, so each update took up two
+  lines of the log.
+
 0.4.0 - 2026-11-21
 ------------------
 

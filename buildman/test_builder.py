@@ -162,6 +162,133 @@ class TestPrintFuncSizeDetail(unittest.TestCase):
         self.assertEqual(len(lines), 0)
 
 
+class TestProgress(unittest.TestCase):
+    """Tests for the progress shown by Builder.process_result()"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.col = terminal.Color()
+        terminal.set_print_test_mode()
+
+    def tearDown(self):
+        """Clean up after tests"""
+        terminal.set_print_test_mode(False)
+
+    def _get_builder(self, count):
+        """Create a builder which is part-way through a build
+
+        Args:
+            count (int): Number of builds to do
+
+        Returns:
+            Builder: Builder to use
+        """
+        build = builder.Builder(
+            toolchains=None, base_dir='/tmp', git_dir=None, num_threads=0,
+            num_jobs=1, col=self.col,
+            result_handler=ResultHandler(self.col, DEFAULT_OPTS))
+        build.count = count
+        return build
+
+    @staticmethod
+    def _get_result(target, return_code=0):
+        """Create a fake result for a board
+
+        Args:
+            target (str): Name of board
+            return_code (int): Return code from the build
+
+        Returns:
+            Mock: Result to pass to process_result()
+        """
+        return mock.Mock(brd=mock.Mock(target=target),
+                         return_code=return_code, stderr='',
+                         already_done=False, skipped=False,
+                         kconfig_reconfig=False, remote=None)
+
+    def test_have_terminal(self):
+        """Test detecting whether there is a terminal"""
+        # In test mode the output is collected, so progress is shown in full
+        self.assertTrue(builder.have_terminal())
+
+        terminal.set_print_test_mode(False)
+        with mock.patch.object(terminal, 'have_terminal', return_value=True):
+            self.assertTrue(builder.have_terminal())
+        with mock.patch.object(terminal, 'have_terminal', return_value=False):
+            self.assertFalse(builder.have_terminal())
+
+        # stdout may have no file behind it
+        with mock.patch.object(terminal, 'have_terminal',
+                               side_effect=ValueError('no fileno')):
+            self.assertFalse(builder.have_terminal())
+
+    def test_terminal(self):
+        """Test that every build updates the progress line on a terminal"""
+        build = self._get_builder(3)
+        terminal.get_print_test_lines()  # Clear
+        build.process_result(None)
+        for num in range(3):
+            build.process_result(self._get_result(f'board{num}'))
+        lines = [line for line in terminal.get_print_test_lines()
+                 if line.text]
+        self.assertEqual(4, len(lines))
+        self.assertTrue(lines[0].text.startswith('\r'))
+        self.assertFalse(lines[0].newline)
+        self.assertIn('(starting)', lines[0].text)
+        self.assertIn('board2', lines[3].text)
+
+    def test_no_terminal(self):
+        """Test that progress is shown now and then without a terminal"""
+        build = self._get_builder(5)
+        build._progress_period = builder.PROGRESS_PERIOD
+        terminal.get_print_test_lines()  # Clear
+
+        # Nothing is shown at the start, or for builds in the first minute
+        with mock.patch.object(builder.time, 'monotonic', return_value=100):
+            build.process_result(None)
+        with mock.patch.object(builder.time, 'monotonic', return_value=159):
+            build.process_result(self._get_result('board0'))
+        self.assertFalse(terminal.get_print_test_lines())
+
+        # After a minute a line is shown, on a line of its own
+        with mock.patch.object(builder.time, 'monotonic', return_value=160):
+            build.process_result(self._get_result('board1'))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertEqual('    2    0    0 /5       -3      board1',
+                         lines[0].text)
+        self.assertTrue(lines[0].newline)
+
+        # The next one is a minute after that
+        with mock.patch.object(builder.time, 'monotonic', return_value=219):
+            build.process_result(self._get_result('board2'))
+        self.assertFalse(terminal.get_print_test_lines())
+        with mock.patch.object(builder.time, 'monotonic', return_value=221):
+            build.process_result(self._get_result('board3', 1))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertIn('    3    0    1 /5 ', lines[0].text)
+
+        # The final state is always shown
+        with mock.patch.object(builder.time, 'monotonic', return_value=222):
+            build.process_result(self._get_result('board4'))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertEqual('    4    0    1 /5              board4',
+                         lines[0].text)
+
+    def test_no_terminal_first(self):
+        """Test a build which finishes straight away, without a terminal"""
+        build = self._get_builder(1)
+        build._progress_period = builder.PROGRESS_PERIOD
+        terminal.get_print_test_lines()  # Clear
+        build.process_result(self._get_result('board0'))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertEqual('    1    0    0 /1              board0',
+                         lines[0].text)
+
+
 class TestPrepareThread(unittest.TestCase):
     """Tests for Builder._prepare_thread()"""
 
