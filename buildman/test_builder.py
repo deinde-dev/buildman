@@ -385,6 +385,23 @@ class TestFilterErrors(unittest.TestCase):
             ['main.c:1:2: error: bad', error, also],
             self._filter(text, filter_dtb_warnings=True))
 
+    def test_lto(self):
+        """Test that the lto-wrapper warning about one job is dropped"""
+        text = (
+            'lto-wrapper: warning: using serial compilation of 14 LTRANS '
+            'jobs\n'
+            "lto-wrapper: note: see the '-flto' option documentation for "
+            'more information\n'
+            'lto-wrapper: warning: using serial compilation of 2 LTRANS '
+            'jobs\n'
+            'lto-wrapper: note: see the \u2018-flto\u2019 option documentation '
+            'for more information\n'
+            'lto-wrapper: fatal error: something else\n'
+            'main.c:1:2: warning: something\n')
+        self.assertEqual(['lto-wrapper: fatal error: something else',
+                          'main.c:1:2: warning: something'],
+                         self._filter(text))
+
 
 class TestPrepareThread(unittest.TestCase):
     """Tests for Builder._prepare_thread()"""

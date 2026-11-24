@@ -69,6 +69,13 @@ PROGRESS_PERIOD = 60
 
 RE_MAKE_ERR = re.compile('(make.*Waiting for unfinished)|(Segmentation fault)')
 
+# Buildman passes NPROC=1 to make when it builds with one job, so gcc gets
+# -flto=1 and lto-wrapper complains, adding a note which points to the
+# documentation. The quotes in the note depend on the locale
+RE_LTO_SERIAL = re.compile(
+    r'lto-wrapper: (warning: using serial compilation of \d+ LTRANS jobs|'
+    r'note: see the .-flto. option documentation for more information)')
+
 # Symbol types which appear in the bloat feature (-B). Others are silently
 # dropped when reading in the 'nm' output
 NM_SYMBOL_TYPES = 'tTdDbBr'
@@ -919,7 +926,7 @@ class Builder:
             lines = text.splitlines(keepends=True)
         in_dtb_warning = False
         for line in lines:
-            if RE_MAKE_ERR.search(line):
+            if RE_MAKE_ERR.search(line) or RE_LTO_SERIAL.search(line):
                 continue
             if self._filter_dtb_warnings:
                 # Drop the warning along with any lines which belong to it

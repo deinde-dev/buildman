@@ -23,6 +23,8 @@ Fixed
   only matched the older form, which has a line of ``=`` above and below.
 - ``-y`` also filters out the ``also defined at`` lines which follow a
   devicetree warning.
+- The lto-wrapper warning about serial compilation is no longer reported. It
+  appears when a board is built with one job, which is Buildman's choice.
 
 0.4.0 - 2026-11-21
 ------------------
