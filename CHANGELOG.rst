@@ -5,8 +5,8 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
-Unreleased
-----------
+0.5.0 - 2026-11-24
+------------------
 
 Added
 ~~~~~
@@ -32,6 +32,8 @@ Fixed
   only matched the older form, which has a line of ``=`` above and below.
 - ``-y`` also filters out the ``also defined at`` lines which follow a
   devicetree warning.
+- The documentation says that ``-y`` and ``-Y`` work when building, as well
+  as with ``-s``, rather than suggesting that they are only for ``-s``.
 - The lto-wrapper warning about serial compilation is no longer reported. It
   appears when a board is built with one job, which is Buildman's choice.
 
