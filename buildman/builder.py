@@ -771,7 +771,9 @@ class Builder:
             self.upto += 1
             if result.return_code != 0:
                 self.fail += 1
-            elif result.stderr:
+            elif result.stderr and self._filter_errors(
+                    result.stderr.splitlines(keepends=True)):
+                # Output which is filtered out does not count as a warning
                 self._warned += 1
             if result.already_done:
                 self._already_done += 1

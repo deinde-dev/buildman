@@ -277,6 +277,38 @@ class TestProgress(unittest.TestCase):
         self.assertEqual('    4    0    1 /5              board4',
                          lines[0].text)
 
+    def test_warned(self):
+        """Test that output which is filtered is not counted as a warning"""
+        build = self._get_builder(4)
+        lto = ('lto-wrapper: warning: using serial compilation of 2 LTRANS '
+               'jobs\n')
+        dtb = 'arch/arm/dts/a.dtsi:26.14-28.4: Warning (spi_bus_reg): bad\n'
+
+        # Output which is always dropped
+        result = self._get_result('board0')
+        result.stderr = lto
+        build.process_result(result)
+        self.assertEqual(0, build._warned)
+
+        # A devicetree warning counts, unless it is filtered
+        result = self._get_result('board1')
+        result.stderr = lto + dtb
+        build.process_result(result)
+        self.assertEqual(1, build._warned)
+
+        build.set_display_options(DEFAULT_OPTS, filter_dtb_warnings=True)
+        result = self._get_result('board2')
+        result.stderr = lto + dtb
+        build.process_result(result)
+        self.assertEqual(1, build._warned)
+
+        # A failure is counted whatever the output
+        result = self._get_result('board3', 2)
+        result.stderr = dtb
+        build.process_result(result)
+        self.assertEqual(1, build._warned)
+        self.assertEqual(1, build.fail)
+
     def test_no_terminal_first(self):
         """Test a build which finishes straight away, without a terminal"""
         build = self._get_builder(1)

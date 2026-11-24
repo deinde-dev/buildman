@@ -20,6 +20,9 @@ Changed
   shown at most once a minute and when the build finishes, instead of one for
   each build. The line cannot be overwritten there, so each update took up two
   lines of the log.
+- A board is counted as having warnings only if some of its output is left
+  after filtering. The filters therefore apply to the counts in the progress
+  line and to the return code, as well as to what is shown.
 
 Fixed
 ~~~~~

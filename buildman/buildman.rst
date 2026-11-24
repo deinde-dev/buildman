@@ -1571,7 +1571,8 @@ If there are both warnings and errors, errors win, so Buildman returns 100.
 The -y option is provided to ignore the bountiful device-tree warnings.
 Similarly, -Y tells Buildman to ignore the migration warnings. Both can be used
 when building as well as with -s. A board whose output is all filtered out is
-shown as building without warnings.
+shown as building without warnings and is not counted as having them, so it
+does not cause Buildman to return 101.
 
 In the same way, ``--filter-blob-warnings`` ignores the messages which binman
 produces about missing binary blobs, along with the help which it shows for
