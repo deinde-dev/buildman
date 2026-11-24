@@ -15,6 +15,13 @@ Changed
   each build. The line cannot be overwritten there, so each update took up two
   lines of the log.
 
+Fixed
+~~~~~
+- With ``-Y``, a board whose output is all filtered out is no longer shown as
+  having warnings.
+- ``-Y`` filters out the migration warnings which U-Boot produces now. It
+  only matched the older form, which has a line of ``=`` above and below.
+
 0.4.0 - 2026-11-21
 ------------------
 

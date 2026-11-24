@@ -51,8 +51,16 @@ RE_WARNING = re.compile(r'(.*):(\d*):(\d*): warning: .*')
 RE_DTB_WARNING = re.compile('(.*): Warning .*')
 RE_NOTE = re.compile(
     r'(.*):(\d*):(\d*): note: this is the location of the previous.*')
-RE_MIGRATION_WARNING = re.compile(r'^={21} WARNING ={22}\n.*\n=+\n',
-                                  re.MULTILINE | re.DOTALL)
+
+# Migration warnings: the older form has a line of '=' above and below. The
+# newer ones are plain text, each ending with a pointer to the documentation
+RE_MIGRATION_WARNING = re.compile(
+    r'^={21} WARNING ={22}\n.*\n=+\n|'
+    r'^This board does not use \S+ \(Driver Model\n'
+    r'.*?^See doc/\S+ for more info\.\n|'
+    r'^CONFIG_OF_EMBED is enabled\. '
+    r'.*?^See doc/\S+ for more info\.\n',
+    re.MULTILINE | re.DOTALL)
 # Time between progress lines when there is no terminal (seconds)
 PROGRESS_PERIOD = 60
 
@@ -904,9 +912,8 @@ class Builder:
         """
         out_lines = []
         if self._filter_migration_warnings:
-            text = '\n'.join(lines)
-            text = RE_MIGRATION_WARNING.sub('', text)
-            lines = text.splitlines()
+            text = RE_MIGRATION_WARNING.sub('', ''.join(lines))
+            lines = text.splitlines(keepends=True)
         for line in lines:
             if RE_MAKE_ERR.search(line):
                 continue

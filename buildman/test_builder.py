@@ -289,6 +289,81 @@ class TestProgress(unittest.TestCase):
                          lines[0].text)
 
 
+class TestFilterErrors(unittest.TestCase):
+    """Tests for Builder._filter_errors()"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.col = terminal.Color()
+        self.build = builder.Builder(
+            toolchains=None, base_dir='/tmp', git_dir=None, num_threads=0,
+            num_jobs=1, col=self.col,
+            result_handler=ResultHandler(self.col, DEFAULT_OPTS))
+
+    def _filter(self, text, **kwargs):
+        """Filter some output
+
+        Args:
+            text (str): Output to filter, as written to the 'err' file
+            kwargs (dict): Filters to enable, as for set_display_options()
+
+        Returns:
+            list of str: Lines which remain, without blank lines or newlines
+        """
+        self.build.set_display_options(DEFAULT_OPTS, **kwargs)
+        lines = self.build._filter_errors(text.splitlines(keepends=True))
+        return [line.rstrip('\n') for line in lines if line.strip()]
+
+    def test_migration(self):
+        """Test filtering of migration warnings"""
+        old = (
+            '===================== WARNING ======================\n'
+            'This board does not use CONFIG_DM. CONFIG_DM will be\n'
+            'compulsory starting with the v2020.01 release.\n'
+            'Failure to update may result in board removal.\n'
+            'See doc/develop/driver-model/migration.rst for more info.\n'
+            '====================================================\n')
+        new = (
+            'This board does not use CONFIG_DM_I2C (Driver Model\n'
+            'for I2C drivers). Please update the board to use\n'
+            'CONFIG_DM_I2C before the v2022.04 release. Failure to\n'
+            'update by the deadline may result in board removal.\n'
+            'See doc/develop/driver-model/migration.rst for more info.\n')
+        embed = (
+            'CONFIG_OF_EMBED is enabled. This option should only\n'
+            'be used for debugging purposes. Please use\n'
+            'CONFIG_OF_SEPARATE for boards in mainline.\n'
+            'See doc/develop/devicetree/control.rst for more info.\n')
+        text = ('first.c:1:2: warning: something\n' + new +
+                'second.c:3:4: warning: more\n' + embed + new.replace(
+                    'I2C', 'MMC') + 'third.c:5:6: error: bad\n' + old +
+                'See doc/other.rst for more info.\n')
+
+        # Without the filter, everything is kept
+        self.assertEqual(text.splitlines(), self._filter(text))
+
+        # With it, only the migration warnings are dropped
+        self.assertEqual(
+            ['first.c:1:2: warning: something',
+             'second.c:3:4: warning: more',
+             'third.c:5:6: error: bad',
+             'See doc/other.rst for more info.'],
+            self._filter(text, filter_migration_warnings=True))
+
+        # The lines which remain are passed on unchanged, with no blank
+        # lines added, so that a board with nothing left has no output
+        self.build.set_display_options(DEFAULT_OPTS,
+                                       filter_migration_warnings=True)
+        self.assertEqual(
+            ['first.c:1:2: warning: something\n'],
+            self.build._filter_errors(
+                ['first.c:1:2: warning: something\n'] +
+                new.splitlines(keepends=True)))
+        self.assertEqual(
+            [], self.build._filter_errors((new + embed + old).splitlines(
+                keepends=True)))
+
+
 class TestPrepareThread(unittest.TestCase):
     """Tests for Builder._prepare_thread()"""
 
