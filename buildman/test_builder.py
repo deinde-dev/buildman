@@ -15,6 +15,7 @@ from unittest import mock
 
 from buildman import builder
 from buildman import builderthread
+from buildman import xpl
 from buildman.outcome import (BoardStatus, DisplayOptions, ErrLine,
                               OUTCOME_OK, OUTCOME_ERROR, OUTCOME_UNKNOWN)
 from buildman.resulthandler import ResultHandler, is_blob_missing_line
@@ -1412,7 +1413,7 @@ class TestConfigFileMap(unittest.TestCase):
                           encoding='utf-8') as outf:
                     outf.write('x\n')
 
-            fmap = builderthread.config_file_map(out_dir)
+            fmap = builderthread.config_file_map(out_dir, xpl.DEFAULT_PHASES)
 
             # Top-level files keep their name; SPL files gain a -spl suffix
             self.assertIn('u-boot.cfg', fmap)
@@ -1425,7 +1426,50 @@ class TestConfigFileMap(unittest.TestCase):
     def test_missing(self):
         """A directory with no config files maps to nothing"""
         with tempfile.TemporaryDirectory() as out_dir:
-            self.assertEqual(builderthread.config_file_map(out_dir), {})
+            self.assertEqual(
+                builderthread.config_file_map(out_dir, xpl.DEFAULT_PHASES), {})
+
+    def test_phases(self):
+        """Each phase in the tree has its config files mapped"""
+        with tempfile.TemporaryDirectory() as out_dir:
+            os.makedirs(os.path.join(out_dir, 'mon', 'include', 'generated'))
+            for rel in ['mon/u-boot-mon.cfg',
+                        'mon/include/generated/autoconf.h']:
+                with open(os.path.join(out_dir, rel), 'w',
+                          encoding='utf-8') as outf:
+                    outf.write('x\n')
+            self.assertEqual({}, builderthread.config_file_map(
+                out_dir, xpl.DEFAULT_PHASES))
+            self.assertEqual(
+                ['autoconf-mon.h', 'u-boot-mon.cfg'],
+                sorted(builderthread.config_file_map(out_dir, ('mon',))))
+
+
+class TestConfigFilenames(unittest.TestCase):
+    """Test builder.config_filenames() and builder.all_phases()"""
+
+    def test_config_filenames(self):
+        """Each phase has its own config files"""
+        self.assertEqual(['u-boot.cfg', 'u-boot-spl.cfg', 'u-boot-mon.cfg'],
+                         builder.config_filenames(('spl', 'mon'), True))
+        self.assertEqual(
+            ['u-boot.cfg', 'u-boot-spl.cfg',
+             '.config', '.config-spl', 'autoconf.mk', 'autoconf-spl.mk',
+             'autoconf.h', 'autoconf-spl.h'],
+            builder.config_filenames(('spl',), False))
+
+    def test_all_phases(self):
+        """The tree's phases come first, then any missing defaults"""
+        self.assertEqual(xpl.DEFAULT_PHASES, builder.all_phases(None))
+        with tempfile.TemporaryDirectory() as srcdir:
+            os.mkdir(os.path.join(srcdir, 'scripts'))
+            with open(os.path.join(srcdir, 'scripts', 'xpl_phases'), 'w',
+                      encoding='utf-8') as outf:
+                outf.write('tpl a\nspl b\nmon -\tresident\n'
+                           'ppl -\tprimary\n')
+            self.assertEqual(
+                ('tpl', 'spl', 'mon', 'vpl'),
+                builder.all_phases(os.path.join(srcdir, '.git')))
 
 
 class TestBlobMissing(unittest.TestCase):

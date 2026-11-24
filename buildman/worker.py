@@ -77,6 +77,7 @@ from buildman import builder as builder_mod
 from buildman.outcome import DisplayOptions
 from buildman.resulthandler import ResultHandler
 from buildman import toolchain as toolchain_mod
+from buildman import xpl
 from u_boot_pylib import command
 from u_boot_pylib import terminal
 
@@ -243,18 +244,19 @@ def _run_tool(cmd, cwd, env=None):
     return stdout.decode('utf-8', errors='replace')
 
 
-def _get_sizes(out_dir, cross='', env=None):
+def _get_sizes(out_dir, phases, cross='', env=None):
     """Get the image sizes from a build output directory
 
     This produces the same lines as a local build (see
-    BuilderThread._process_elf_file()), for each of U-Boot proper, SPL and
-    TPL: the output of the toolchain's 'size' with the header line dropped
+    BuilderThread._process_elf_file()), for U-Boot proper and each xPL
+    phase: the output of the toolchain's 'size' with the header line dropped
     and the .rodata size appended. The ELF files are named relative to the
     output directory, since the summary matches up the sizes for each
     commit using the filename.
 
     Args:
         out_dir (str): Build output directory
+        phases (tuple of str): xPL phases of the tree being built
         cross (str): Cross-compiler prefix, e.g. 'aarch64-linux-'
         env (dict): Environment with the toolchain on the PATH, as used for
             the build, or None for the current one
@@ -263,7 +265,7 @@ def _get_sizes(out_dir, cross='', env=None):
         dict: Size information, or empty dict if not available
     """
     lines = []
-    for fname in builderthread.BASE_ELF_FILENAMES:
+    for fname in xpl.elf_filenames(phases):
         if not os.path.exists(os.path.join(out_dir, fname)):
             continue
         size = _run_tool([f'{cross}size', fname], out_dir,
@@ -278,18 +280,20 @@ def _get_sizes(out_dir, cross='', env=None):
     return {'raw': '\n'.join(lines)}
 
 
-def _get_config(out_dir):
+def _get_config(out_dir, phases):
     """Read the generated config files from a build output directory
 
     Args:
         out_dir (str): Build output directory
+        phases (tuple of str): xPL phases of the tree being built
 
     Returns:
         dict: Keyed by output filename (e.g. '.config', 'autoconf-spl.h'),
             with the file contents as the value. Empty if none are present
     """
     config = {}
-    for target, fname in builderthread.config_file_map(out_dir).items():
+    for target, fname in builderthread.config_file_map(out_dir,
+                                                       phases).items():
         try:
             with open(fname, 'r', encoding='utf-8', errors='replace') as inf:
                 config[target] = inf.read()
@@ -505,7 +509,8 @@ class _WorkerBuilderThread(builderthread.BuilderThread):
             # The toolchain's tools are only found on the PATH which the
             # build uses
             env = self.builder.make_environment(self.toolchain)
-            sizes = _get_sizes(result.out_dir, self.toolchain.cross, env)
+            sizes = _get_sizes(result.out_dir, xpl.read_phases(result.src_dir),
+                               self.toolchain.cross, env)
             # Scan the DWARF line info while the object files are still
             # present, since _write_result() is a no-op on the worker and so
             # never writes the manifest. The boss writes it to the build dir
@@ -516,7 +521,9 @@ class _WorkerBuilderThread(builderthread.BuilderThread):
             # can be diagnosed without reproducing the build locally. Only on
             # failure, since a build that got far enough to fail has the
             # config files but a good build's are not usually needed
-            config = _get_config(result.out_dir)
+            config = _get_config(
+                result.out_dir,
+                xpl.read_phases(getattr(result, 'src_dir', None)))
         _send_build_result(
             result.brd.target, result.commit_upto, result.return_code,
             stderr=result.stderr or '', stdout=result.stdout or '',

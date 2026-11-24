@@ -47,6 +47,7 @@ def run_tests(skip_net_tests, debug, verbose, args):
     from buildman import test_kconfiglib
     from buildman import test_machine
     from buildman import test_worker
+    from buildman import test_xpl
     from buildman import test_boss
 
     test_name = args.terms and args.terms[0] or None
@@ -60,6 +61,7 @@ def run_tests(skip_net_tests, debug, verbose, args):
         [test.TestBuildOutput, test.TestBuildBoards, test.TestBuild,
          test.TestBuildMisc, test.TestBuilderFuncs,
          test_cfgutil.TestAdjustCfg, test_cfgutil.TestProcessConfig,
+         test_cfgutil.TestRunMergeConfig,
          func_test.TestFunctional,
          test_boards.TestBoards, test_bsettings.TestBsettings,
          test_builder.TestPrintFuncSizeDetail,
@@ -72,10 +74,18 @@ def run_tests(skip_net_tests, debug, verbose, args):
          test_builder.TestCheckOutputForLoop,
          test_builder.TestMake,
          test_builder.TestPrintBuildSummary,
+         test_builder.TestLines,
+         test_builder.TestLinesCode,
+         test_builder.TestConfigFileMap,
+         test_builder.TestConfigFilenames,
+         test_builder.TestBlobMissing,
+         test_builder.TestFlakeDetection,
+         test_builder.TestScanLines,
          test_depscan,
          test_dtcache,
          test_kconfiglib,
          test_machine,
+         test_xpl,
          test_worker,
          test_boss,
          'buildman.toolchain'])

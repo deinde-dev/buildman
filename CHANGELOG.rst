@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
+Unreleased
+----------
+
+Changed
+~~~~~~~
+- Sizes, configs and kept outputs cover every xPL phase listed in
+  ``scripts/xpl_phases`` in the tree being built, not just SPL and TPL, so
+  VPL is reported now, as is any new phase such as MON. A tree without the
+  file uses TPL, VPL and SPL.
+
 0.5.0 - 2026-11-24
 ------------------
 
