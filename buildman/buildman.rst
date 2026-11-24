@@ -1568,8 +1568,10 @@ warnings will produce success (since 101 is changed to 0).
 
 If there are both warnings and errors, errors win, so Buildman returns 100.
 
-The -y option is provided (for use with -s) to ignore the bountiful device-tree
-warnings. Similarly, -Y tells Buildman to ignore the migration warnings.
+The -y option is provided to ignore the bountiful device-tree warnings.
+Similarly, -Y tells Buildman to ignore the migration warnings. Both can be used
+when building as well as with -s. A board whose output is all filtered out is
+shown as building without warnings.
 
 Buildman shows its progress on a single line, which it updates as each build
 finishes. This needs a terminal. When the output goes somewhere else, such as

@@ -21,6 +21,8 @@ Fixed
   having warnings.
 - ``-Y`` filters out the migration warnings which U-Boot produces now. It
   only matched the older form, which has a line of ``=`` above and below.
+- ``-y`` also filters out the ``also defined at`` lines which follow a
+  devicetree warning.
 
 0.4.0 - 2026-11-21
 ------------------

@@ -363,6 +363,28 @@ class TestFilterErrors(unittest.TestCase):
             [], self.build._filter_errors((new + embed + old).splitlines(
                 keepends=True)))
 
+    def test_dtb(self):
+        """Test filtering of devicetree warnings"""
+        warn1 = ('arch/arm/dts/a.dtsi:26.14-28.4: Warning (spi_bus_reg): '
+                 '/soc/spi@10600/spi-flash@0: missing or empty reg property')
+        warn2 = ('arch/arm/dts/b.dtsi:159.22-166.6: Warning '
+                 '(interrupts_property): /soc/gpio@18100: Missing '
+                 'interrupt-controller or interrupt-map property')
+        also = '  also defined at arch/arm/dts/.c.dtb.pre.tmp:126.8-147.3'
+        error = ('arch/arm/dts/d.dts:9.4-12.3: ERROR (duplicate_label): '
+                 "/x: Duplicate label 'fred' on /x and /y")
+        text = '\n'.join([warn1, also, also, warn2, 'main.c:1:2: error: bad',
+                          error, also, '']) + '\n'
+
+        self.assertEqual(
+            [warn1, also, also, warn2, 'main.c:1:2: error: bad', error, also],
+            self._filter(text))
+
+        # The extra lines go with a warning, but stay with an error
+        self.assertEqual(
+            ['main.c:1:2: error: bad', error, also],
+            self._filter(text, filter_dtb_warnings=True))
+
 
 class TestPrepareThread(unittest.TestCase):
     """Tests for Builder._prepare_thread()"""

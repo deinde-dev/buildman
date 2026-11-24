@@ -49,6 +49,9 @@ RE_FUNCTION = re.compile('(.*): In function.*')
 RE_FILES = re.compile('In file included from.*')
 RE_WARNING = re.compile(r'(.*):(\d*):(\d*): warning: .*')
 RE_DTB_WARNING = re.compile('(.*): Warning .*')
+
+# Extra line which dtc adds to a warning, for a node with several definitions
+RE_DTB_ALSO = re.compile(r'^\s+also defined at ')
 RE_NOTE = re.compile(
     r'(.*):(\d*):(\d*): note: this is the location of the previous.*')
 
@@ -914,11 +917,19 @@ class Builder:
         if self._filter_migration_warnings:
             text = RE_MIGRATION_WARNING.sub('', ''.join(lines))
             lines = text.splitlines(keepends=True)
+        in_dtb_warning = False
         for line in lines:
             if RE_MAKE_ERR.search(line):
                 continue
-            if self._filter_dtb_warnings and RE_DTB_WARNING.search(line):
-                continue
+            if self._filter_dtb_warnings:
+                # Drop the warning along with any lines which belong to it
+                if RE_DTB_WARNING.search(line):
+                    in_dtb_warning = True
+                    continue
+                if in_dtb_warning and RE_DTB_ALSO.search(line):
+                    continue
+                if line.strip():
+                    in_dtb_warning = False
             out_lines.append(line)
         return out_lines
 
