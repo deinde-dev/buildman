@@ -832,7 +832,7 @@ def run_builder(builder, commits, board_selected, display_options, args):
 
     builder.set_display_options(
         display_options, args.filter_dtb_warnings,
-        args.filter_migration_warnings)
+        args.filter_migration_warnings, args.filter_blob_warnings)
     if args.summary:
         builder.commits = commits
         builder.result_handler.show_summary(

@@ -402,6 +402,63 @@ class TestFilterErrors(unittest.TestCase):
                           'main.c:1:2: warning: something'],
                          self._filter(text))
 
+    def test_blob(self):
+        """Test filtering of messages about missing blobs"""
+        text = """WARNING 'mx8qm-ahab-container.img' not found, resulting \
+binary is not-functional
+WARNING 'bl31.bin' not found, resulting binary may be not-functional
+Image 'itb' is missing external blobs and is non-functional: atf-blob scfw
+
+/binman/itb/fit/images/atf/atf-blob (bl31.bin):
+   See the documentation for your board. You may need to build ARM Trusted
+   Firmware and build with BL31=/path/to/bl31.bin
+
+/binman/itb/fit/images/scfw/scfw_blob (mx8qm-val-scfw-tcm.bin):
+   Missing blob
+
+Image 'itb' has faked external blobs and is non-functional: bl31.bin
+
+Image 'simple-bin' is missing optional external blobs but is still \
+functional: tee-os
+
+/binman/simple-bin/fit/images/@tee-SEQ/tee-os (tee-os):
+   See the documentation for your board. You may need to build Open Portable
+   Trusted Execution Environment (OP-TEE) and build with TEE=/path/to/tee.bin
+
+Image 'capsule' has missing bintools and is non-functional: mkeficapsule
+
+Some images are invalid
+   indented line which is not part of any help
+main.c:1:2: warning: something
+"""
+        expect = [line for line in text.splitlines() if line]
+        self.assertEqual(expect, self._filter(text))
+
+        # Missing tools are a different matter, so that message is kept
+        self.assertEqual(
+            ["Image 'capsule' has missing bintools and is non-functional: "
+             'mkeficapsule',
+             '   indented line which is not part of any help',
+             'main.c:1:2: warning: something'],
+            self._filter(text, filter_blob_warnings=True))
+
+        # The blank lines after a message go too, but not the others
+        self.build.set_display_options(DEFAULT_OPTS,
+                                       filter_blob_warnings=True)
+        blob = ("Image 'itb' is missing external blobs and is "
+                'non-functional: atf\n')
+        self.assertEqual(
+            ['one\n', '\n', 'two\n', 'three\n', '\n'],
+            self.build._filter_errors(
+                ['one\n', '\n', 'two\n', blob, '\n', '\n', 'three\n',
+                 '\n', 'Some images are invalid\n', '\n']))
+
+        # A board with nothing but blank lines left has no output
+        self.assertEqual(
+            [], self.build._filter_errors(['\n', blob, '\n', '\n']))
+        self.assertEqual(
+            [], self.build._filter_errors(['\n', '\n', blob]))
+
 
 class TestPrepareThread(unittest.TestCase):
     """Tests for Builder._prepare_thread()"""

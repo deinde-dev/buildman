@@ -8,6 +8,12 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+Added
+~~~~~
+- ``--filter-blob-warnings`` filters out the messages which binman produces
+  about missing binary blobs. These are expected when building without the
+  blobs, and with a lot of boards they run to thousands of lines.
+
 Changed
 ~~~~~~~
 - When the output is not a terminal, e.g. in a CI log, a line of progress is

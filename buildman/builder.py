@@ -69,6 +69,15 @@ PROGRESS_PERIOD = 60
 
 RE_MAKE_ERR = re.compile('(make.*Waiting for unfinished)|(Segmentation fault)')
 
+# Messages which binman produces for a missing binary blob. The first is the
+# heading for some help, which follows on lines indented by three spaces. The
+# last comes from U-Boot's scripts for i.MX images
+RE_BLOB_HELP = re.compile(r'^/binman/\S+ \(.*\):$')
+RE_BLOB_MISSING = re.compile(
+    r"^Image '.*' (is missing|has faked) (optional )?external blobs |"
+    r'^Some images are invalid$|'
+    r"^WARNING '.*' not found, resulting binary (is|may be) not-functional$")
+
 # Buildman passes NPROC=1 to make when it builds with one job, so gcc gets
 # -flto=1 and lto-wrapper complains, adding a note which points to the
 # documentation. The quotes in the note depend on the locale
@@ -188,6 +197,43 @@ def have_terminal():
     except (AttributeError, OSError, ValueError):
         # stdout has been replaced with something which has no file
         return False
+
+
+def filter_blob_lines(lines):
+    """Remove the messages which binman produces about missing blobs
+
+    binman separates its messages with blank lines, so those which follow a
+    message which is removed are removed too
+
+    Args:
+        lines (list of str): Lines of output, each ending with a newline
+
+    Returns:
+        list of str: Lines which remain
+    """
+    out_lines = []
+    in_help = False
+    after_blob = False
+    for line in lines:
+        text = line.rstrip('\n')
+        if not text.strip():
+            if after_blob:
+                continue
+        elif RE_BLOB_HELP.search(text):
+            in_help = True
+            after_blob = True
+            continue
+        elif in_help and text.startswith('   '):
+            continue
+        elif RE_BLOB_MISSING.search(text):
+            in_help = False
+            after_blob = True
+            continue
+        else:
+            in_help = False
+            after_blob = False
+        out_lines.append(line)
+    return out_lines
 
 
 class Builder:
@@ -437,6 +483,7 @@ class Builder:
             show_not_built=False)
         self._filter_dtb_warnings = False
         self._filter_migration_warnings = False
+        self._filter_blob_warnings = False
 
         # Attributes set by other methods
         self._build_period = None
@@ -573,7 +620,8 @@ class Builder:
 
     def set_display_options(self, display_options,
                             filter_dtb_warnings=False,
-                            filter_migration_warnings=False):
+                            filter_migration_warnings=False,
+                            filter_blob_warnings=False):
         """Setup display options for the builder.
 
         Args:
@@ -585,10 +633,13 @@ class Builder:
                 device-tree compiler
             filter_migration_warnings (bool): Filter out any warnings about
                 migrating a board to driver model
+            filter_blob_warnings (bool): Filter out any messages from binman
+                about missing binary blobs
         """
         self._opts = display_options
         self._filter_dtb_warnings = filter_dtb_warnings
         self._filter_migration_warnings = filter_migration_warnings
+        self._filter_blob_warnings = filter_blob_warnings
 
     @property
     def result_handler(self):
@@ -924,6 +975,8 @@ class Builder:
         if self._filter_migration_warnings:
             text = RE_MIGRATION_WARNING.sub('', ''.join(lines))
             lines = text.splitlines(keepends=True)
+        if self._filter_blob_warnings:
+            lines = filter_blob_lines(lines)
         in_dtb_warning = False
         for line in lines:
             if RE_MAKE_ERR.search(line) or RE_LTO_SERIAL.search(line):
@@ -938,6 +991,10 @@ class Builder:
                 if line.strip():
                     in_dtb_warning = False
             out_lines.append(line)
+
+        # If only blank lines are left, the board has no output
+        if self._filter_blob_warnings and not ''.join(out_lines).strip():
+            return []
         return out_lines
 
     def read_func_sizes(self, _fname, fd):
