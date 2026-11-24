@@ -5,6 +5,36 @@ All notable changes to this project are documented here. The format is
 based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_ and
 the project follows `Semantic Versioning <https://semver.org/>`_.
 
+Unreleased
+----------
+
+Added
+~~~~~
+- ``--filter-blob-warnings`` filters out the messages which binman produces
+  about missing binary blobs. These are expected when building without the
+  blobs, and with a lot of boards they run to thousands of lines.
+
+Changed
+~~~~~~~
+- When the output is not a terminal, e.g. in a CI log, a line of progress is
+  shown at most once a minute and when the build finishes, instead of one for
+  each build. The line cannot be overwritten there, so each update took up two
+  lines of the log.
+- A board is counted as having warnings only if some of its output is left
+  after filtering. The filters therefore apply to the counts in the progress
+  line and to the return code, as well as to what is shown.
+
+Fixed
+~~~~~
+- With ``-Y``, a board whose output is all filtered out is no longer shown as
+  having warnings.
+- ``-Y`` filters out the migration warnings which U-Boot produces now. It
+  only matched the older form, which has a line of ``=`` above and below.
+- ``-y`` also filters out the ``also defined at`` lines which follow a
+  devicetree warning.
+- The lto-wrapper warning about serial compilation is no longer reported. It
+  appears when a board is built with one job, which is Buildman's choice.
+
 0.4.0 - 2026-11-21
 ------------------
 

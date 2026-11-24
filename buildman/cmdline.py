@@ -40,6 +40,7 @@ def parse_shard(value):
     return index, count
 
 
+# pylint: disable=too-many-statements
 def add_upto_m(parser):
     """Add arguments up to 'M'
 
@@ -97,6 +98,9 @@ def add_upto_m(parser):
           help="Fetch a toolchain for architecture FETCH_ARCH ('list' to list)."
               ' You can also fetch several toolchains separate by comma, or'
               " 'all' to download all")
+    parser.add_argument('--filter-blob-warnings', action='store_true',
+          default=False,
+          help='Filter out messages about missing binary blobs from output')
     parser.add_argument('--fragments', type=str,
           help="Comma separated list of configuration fragments to be applied")
     parser.add_argument(

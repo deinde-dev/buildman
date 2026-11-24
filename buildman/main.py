@@ -63,6 +63,8 @@ def run_tests(skip_net_tests, debug, verbose, args):
          func_test.TestFunctional,
          test_boards.TestBoards, test_bsettings.TestBsettings,
          test_builder.TestPrintFuncSizeDetail,
+         test_builder.TestProgress,
+         test_builder.TestFilterErrors,
          test_builder.TestPrepareThread,
          test_builder.TestPrepareWorkingSpace,
          test_builder.TestShowNotBuilt,

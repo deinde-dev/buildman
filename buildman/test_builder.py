@@ -162,6 +162,336 @@ class TestPrintFuncSizeDetail(unittest.TestCase):
         self.assertEqual(len(lines), 0)
 
 
+class TestProgress(unittest.TestCase):
+    """Tests for the progress shown by Builder.process_result()"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.col = terminal.Color()
+        terminal.set_print_test_mode()
+
+    def tearDown(self):
+        """Clean up after tests"""
+        terminal.set_print_test_mode(False)
+
+    def _get_builder(self, count):
+        """Create a builder which is part-way through a build
+
+        Args:
+            count (int): Number of builds to do
+
+        Returns:
+            Builder: Builder to use
+        """
+        build = builder.Builder(
+            toolchains=None, base_dir='/tmp', git_dir=None, num_threads=0,
+            num_jobs=1, col=self.col,
+            result_handler=ResultHandler(self.col, DEFAULT_OPTS))
+        build.count = count
+        return build
+
+    @staticmethod
+    def _get_result(target, return_code=0):
+        """Create a fake result for a board
+
+        Args:
+            target (str): Name of board
+            return_code (int): Return code from the build
+
+        Returns:
+            Mock: Result to pass to process_result()
+        """
+        return mock.Mock(brd=mock.Mock(target=target),
+                         return_code=return_code, stderr='',
+                         already_done=False, skipped=False,
+                         kconfig_reconfig=False, remote=None)
+
+    def test_have_terminal(self):
+        """Test detecting whether there is a terminal"""
+        # In test mode the output is collected, so progress is shown in full
+        self.assertTrue(builder.have_terminal())
+
+        terminal.set_print_test_mode(False)
+        with mock.patch.object(terminal, 'have_terminal', return_value=True):
+            self.assertTrue(builder.have_terminal())
+        with mock.patch.object(terminal, 'have_terminal', return_value=False):
+            self.assertFalse(builder.have_terminal())
+
+        # stdout may have no file behind it
+        with mock.patch.object(terminal, 'have_terminal',
+                               side_effect=ValueError('no fileno')):
+            self.assertFalse(builder.have_terminal())
+
+    def test_terminal(self):
+        """Test that every build updates the progress line on a terminal"""
+        build = self._get_builder(3)
+        terminal.get_print_test_lines()  # Clear
+        build.process_result(None)
+        for num in range(3):
+            build.process_result(self._get_result(f'board{num}'))
+        lines = [line for line in terminal.get_print_test_lines()
+                 if line.text]
+        self.assertEqual(4, len(lines))
+        self.assertTrue(lines[0].text.startswith('\r'))
+        self.assertFalse(lines[0].newline)
+        self.assertIn('(starting)', lines[0].text)
+        self.assertIn('board2', lines[3].text)
+
+    def test_no_terminal(self):
+        """Test that progress is shown now and then without a terminal"""
+        build = self._get_builder(5)
+        build._progress_period = builder.PROGRESS_PERIOD
+        terminal.get_print_test_lines()  # Clear
+
+        # Nothing is shown at the start, or for builds in the first minute
+        with mock.patch.object(builder.time, 'monotonic', return_value=100):
+            build.process_result(None)
+        with mock.patch.object(builder.time, 'monotonic', return_value=159):
+            build.process_result(self._get_result('board0'))
+        self.assertFalse(terminal.get_print_test_lines())
+
+        # After a minute a line is shown, on a line of its own
+        with mock.patch.object(builder.time, 'monotonic', return_value=160):
+            build.process_result(self._get_result('board1'))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertEqual('    2    0    0 /5       -3      board1',
+                         lines[0].text)
+        self.assertTrue(lines[0].newline)
+
+        # The next one is a minute after that
+        with mock.patch.object(builder.time, 'monotonic', return_value=219):
+            build.process_result(self._get_result('board2'))
+        self.assertFalse(terminal.get_print_test_lines())
+        with mock.patch.object(builder.time, 'monotonic', return_value=221):
+            build.process_result(self._get_result('board3', 1))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertIn('    3    0    1 /5 ', lines[0].text)
+
+        # The final state is always shown
+        with mock.patch.object(builder.time, 'monotonic', return_value=222):
+            build.process_result(self._get_result('board4'))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertEqual('    4    0    1 /5              board4',
+                         lines[0].text)
+
+    def test_warned(self):
+        """Test that output which is filtered is not counted as a warning"""
+        build = self._get_builder(4)
+        lto = ('lto-wrapper: warning: using serial compilation of 2 LTRANS '
+               'jobs\n')
+        dtb = 'arch/arm/dts/a.dtsi:26.14-28.4: Warning (spi_bus_reg): bad\n'
+
+        # Output which is always dropped
+        result = self._get_result('board0')
+        result.stderr = lto
+        build.process_result(result)
+        self.assertEqual(0, build._warned)
+
+        # A devicetree warning counts, unless it is filtered
+        result = self._get_result('board1')
+        result.stderr = lto + dtb
+        build.process_result(result)
+        self.assertEqual(1, build._warned)
+
+        build.set_display_options(DEFAULT_OPTS, filter_dtb_warnings=True)
+        result = self._get_result('board2')
+        result.stderr = lto + dtb
+        build.process_result(result)
+        self.assertEqual(1, build._warned)
+
+        # A failure is counted whatever the output
+        result = self._get_result('board3', 2)
+        result.stderr = dtb
+        build.process_result(result)
+        self.assertEqual(1, build._warned)
+        self.assertEqual(1, build.fail)
+
+    def test_no_terminal_first(self):
+        """Test a build which finishes straight away, without a terminal"""
+        build = self._get_builder(1)
+        build._progress_period = builder.PROGRESS_PERIOD
+        terminal.get_print_test_lines()  # Clear
+        build.process_result(self._get_result('board0'))
+        lines = terminal.get_print_test_lines()
+        self.assertEqual(1, len(lines))
+        self.assertEqual('    1    0    0 /1              board0',
+                         lines[0].text)
+
+
+class TestFilterErrors(unittest.TestCase):
+    """Tests for Builder._filter_errors()"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.col = terminal.Color()
+        self.build = builder.Builder(
+            toolchains=None, base_dir='/tmp', git_dir=None, num_threads=0,
+            num_jobs=1, col=self.col,
+            result_handler=ResultHandler(self.col, DEFAULT_OPTS))
+
+    def _filter(self, text, **kwargs):
+        """Filter some output
+
+        Args:
+            text (str): Output to filter, as written to the 'err' file
+            kwargs (dict): Filters to enable, as for set_display_options()
+
+        Returns:
+            list of str: Lines which remain, without blank lines or newlines
+        """
+        self.build.set_display_options(DEFAULT_OPTS, **kwargs)
+        lines = self.build._filter_errors(text.splitlines(keepends=True))
+        return [line.rstrip('\n') for line in lines if line.strip()]
+
+    def test_migration(self):
+        """Test filtering of migration warnings"""
+        old = (
+            '===================== WARNING ======================\n'
+            'This board does not use CONFIG_DM. CONFIG_DM will be\n'
+            'compulsory starting with the v2020.01 release.\n'
+            'Failure to update may result in board removal.\n'
+            'See doc/develop/driver-model/migration.rst for more info.\n'
+            '====================================================\n')
+        new = (
+            'This board does not use CONFIG_DM_I2C (Driver Model\n'
+            'for I2C drivers). Please update the board to use\n'
+            'CONFIG_DM_I2C before the v2022.04 release. Failure to\n'
+            'update by the deadline may result in board removal.\n'
+            'See doc/develop/driver-model/migration.rst for more info.\n')
+        embed = (
+            'CONFIG_OF_EMBED is enabled. This option should only\n'
+            'be used for debugging purposes. Please use\n'
+            'CONFIG_OF_SEPARATE for boards in mainline.\n'
+            'See doc/develop/devicetree/control.rst for more info.\n')
+        text = ('first.c:1:2: warning: something\n' + new +
+                'second.c:3:4: warning: more\n' + embed + new.replace(
+                    'I2C', 'MMC') + 'third.c:5:6: error: bad\n' + old +
+                'See doc/other.rst for more info.\n')
+
+        # Without the filter, everything is kept
+        self.assertEqual(text.splitlines(), self._filter(text))
+
+        # With it, only the migration warnings are dropped
+        self.assertEqual(
+            ['first.c:1:2: warning: something',
+             'second.c:3:4: warning: more',
+             'third.c:5:6: error: bad',
+             'See doc/other.rst for more info.'],
+            self._filter(text, filter_migration_warnings=True))
+
+        # The lines which remain are passed on unchanged, with no blank
+        # lines added, so that a board with nothing left has no output
+        self.build.set_display_options(DEFAULT_OPTS,
+                                       filter_migration_warnings=True)
+        self.assertEqual(
+            ['first.c:1:2: warning: something\n'],
+            self.build._filter_errors(
+                ['first.c:1:2: warning: something\n'] +
+                new.splitlines(keepends=True)))
+        self.assertEqual(
+            [], self.build._filter_errors((new + embed + old).splitlines(
+                keepends=True)))
+
+    def test_dtb(self):
+        """Test filtering of devicetree warnings"""
+        warn1 = ('arch/arm/dts/a.dtsi:26.14-28.4: Warning (spi_bus_reg): '
+                 '/soc/spi@10600/spi-flash@0: missing or empty reg property')
+        warn2 = ('arch/arm/dts/b.dtsi:159.22-166.6: Warning '
+                 '(interrupts_property): /soc/gpio@18100: Missing '
+                 'interrupt-controller or interrupt-map property')
+        also = '  also defined at arch/arm/dts/.c.dtb.pre.tmp:126.8-147.3'
+        error = ('arch/arm/dts/d.dts:9.4-12.3: ERROR (duplicate_label): '
+                 "/x: Duplicate label 'fred' on /x and /y")
+        text = '\n'.join([warn1, also, also, warn2, 'main.c:1:2: error: bad',
+                          error, also, '']) + '\n'
+
+        self.assertEqual(
+            [warn1, also, also, warn2, 'main.c:1:2: error: bad', error, also],
+            self._filter(text))
+
+        # The extra lines go with a warning, but stay with an error
+        self.assertEqual(
+            ['main.c:1:2: error: bad', error, also],
+            self._filter(text, filter_dtb_warnings=True))
+
+    def test_lto(self):
+        """Test that the lto-wrapper warning about one job is dropped"""
+        text = (
+            'lto-wrapper: warning: using serial compilation of 14 LTRANS '
+            'jobs\n'
+            "lto-wrapper: note: see the '-flto' option documentation for "
+            'more information\n'
+            'lto-wrapper: warning: using serial compilation of 2 LTRANS '
+            'jobs\n'
+            'lto-wrapper: note: see the \u2018-flto\u2019 option documentation '
+            'for more information\n'
+            'lto-wrapper: fatal error: something else\n'
+            'main.c:1:2: warning: something\n')
+        self.assertEqual(['lto-wrapper: fatal error: something else',
+                          'main.c:1:2: warning: something'],
+                         self._filter(text))
+
+    def test_blob(self):
+        """Test filtering of messages about missing blobs"""
+        text = """WARNING 'mx8qm-ahab-container.img' not found, resulting \
+binary is not-functional
+WARNING 'bl31.bin' not found, resulting binary may be not-functional
+Image 'itb' is missing external blobs and is non-functional: atf-blob scfw
+
+/binman/itb/fit/images/atf/atf-blob (bl31.bin):
+   See the documentation for your board. You may need to build ARM Trusted
+   Firmware and build with BL31=/path/to/bl31.bin
+
+/binman/itb/fit/images/scfw/scfw_blob (mx8qm-val-scfw-tcm.bin):
+   Missing blob
+
+Image 'itb' has faked external blobs and is non-functional: bl31.bin
+
+Image 'simple-bin' is missing optional external blobs but is still \
+functional: tee-os
+
+/binman/simple-bin/fit/images/@tee-SEQ/tee-os (tee-os):
+   See the documentation for your board. You may need to build Open Portable
+   Trusted Execution Environment (OP-TEE) and build with TEE=/path/to/tee.bin
+
+Image 'capsule' has missing bintools and is non-functional: mkeficapsule
+
+Some images are invalid
+   indented line which is not part of any help
+main.c:1:2: warning: something
+"""
+        expect = [line for line in text.splitlines() if line]
+        self.assertEqual(expect, self._filter(text))
+
+        # Missing tools are a different matter, so that message is kept
+        self.assertEqual(
+            ["Image 'capsule' has missing bintools and is non-functional: "
+             'mkeficapsule',
+             '   indented line which is not part of any help',
+             'main.c:1:2: warning: something'],
+            self._filter(text, filter_blob_warnings=True))
+
+        # The blank lines after a message go too, but not the others
+        self.build.set_display_options(DEFAULT_OPTS,
+                                       filter_blob_warnings=True)
+        blob = ("Image 'itb' is missing external blobs and is "
+                'non-functional: atf\n')
+        self.assertEqual(
+            ['one\n', '\n', 'two\n', 'three\n', '\n'],
+            self.build._filter_errors(
+                ['one\n', '\n', 'two\n', blob, '\n', '\n', 'three\n',
+                 '\n', 'Some images are invalid\n', '\n']))
+
+        # A board with nothing but blank lines left has no output
+        self.assertEqual(
+            [], self.build._filter_errors(['\n', blob, '\n', '\n']))
+        self.assertEqual(
+            [], self.build._filter_errors(['\n', '\n', blob]))
+
+
 class TestPrepareThread(unittest.TestCase):
     """Tests for Builder._prepare_thread()"""
 

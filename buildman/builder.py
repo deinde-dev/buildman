@@ -18,6 +18,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 
 from buildman import builderthread
 from buildman import dtcache
@@ -48,11 +49,41 @@ RE_FUNCTION = re.compile('(.*): In function.*')
 RE_FILES = re.compile('In file included from.*')
 RE_WARNING = re.compile(r'(.*):(\d*):(\d*): warning: .*')
 RE_DTB_WARNING = re.compile('(.*): Warning .*')
+
+# Extra line which dtc adds to a warning, for a node with several definitions
+RE_DTB_ALSO = re.compile(r'^\s+also defined at ')
 RE_NOTE = re.compile(
     r'(.*):(\d*):(\d*): note: this is the location of the previous.*')
-RE_MIGRATION_WARNING = re.compile(r'^={21} WARNING ={22}\n.*\n=+\n',
-                                  re.MULTILINE | re.DOTALL)
+
+# Migration warnings: the older form has a line of '=' above and below. The
+# newer ones are plain text, each ending with a pointer to the documentation
+RE_MIGRATION_WARNING = re.compile(
+    r'^={21} WARNING ={22}\n.*\n=+\n|'
+    r'^This board does not use \S+ \(Driver Model\n'
+    r'.*?^See doc/\S+ for more info\.\n|'
+    r'^CONFIG_OF_EMBED is enabled\. '
+    r'.*?^See doc/\S+ for more info\.\n',
+    re.MULTILINE | re.DOTALL)
+# Time between progress lines when there is no terminal (seconds)
+PROGRESS_PERIOD = 60
+
 RE_MAKE_ERR = re.compile('(make.*Waiting for unfinished)|(Segmentation fault)')
+
+# Messages which binman produces for a missing binary blob. The first is the
+# heading for some help, which follows on lines indented by three spaces. The
+# last comes from U-Boot's scripts for i.MX images
+RE_BLOB_HELP = re.compile(r'^/binman/\S+ \(.*\):$')
+RE_BLOB_MISSING = re.compile(
+    r"^Image '.*' (is missing|has faked) (optional )?external blobs |"
+    r'^Some images are invalid$|'
+    r"^WARNING '.*' not found, resulting binary (is|may be) not-functional$")
+
+# Buildman passes NPROC=1 to make when it builds with one job, so gcc gets
+# -flto=1 and lto-wrapper complains, adding a note which points to the
+# documentation. The quotes in the note depend on the locale
+RE_LTO_SERIAL = re.compile(
+    r'lto-wrapper: (warning: using serial compilation of \d+ LTRANS jobs|'
+    r'note: see the .-flto. option documentation for more information)')
 
 # Symbol types which appear in the bloat feature (-B). Others are silently
 # dropped when reading in the 'nm' output
@@ -151,6 +182,59 @@ class Environment:
             value (str): Environment variable value
         """
         self.environment[key] = value
+
+def have_terminal():
+    """Check whether progress can be shown by overwriting a line
+
+    Returns:
+        bool: True if the output goes to a terminal (or tests are collecting
+            it), False if it goes somewhere else, e.g. a file or a pipe
+    """
+    if terminal.print_test_mode:
+        return True
+    try:
+        return terminal.have_terminal()
+    except (AttributeError, OSError, ValueError):
+        # stdout has been replaced with something which has no file
+        return False
+
+
+def filter_blob_lines(lines):
+    """Remove the messages which binman produces about missing blobs
+
+    binman separates its messages with blank lines, so those which follow a
+    message which is removed are removed too
+
+    Args:
+        lines (list of str): Lines of output, each ending with a newline
+
+    Returns:
+        list of str: Lines which remain
+    """
+    out_lines = []
+    in_help = False
+    after_blob = False
+    for line in lines:
+        text = line.rstrip('\n')
+        if not text.strip():
+            if after_blob:
+                continue
+        elif RE_BLOB_HELP.search(text):
+            in_help = True
+            after_blob = True
+            continue
+        elif in_help and text.startswith('   '):
+            continue
+        elif RE_BLOB_MISSING.search(text):
+            in_help = False
+            after_blob = True
+            continue
+        else:
+            in_help = False
+            after_blob = False
+        out_lines.append(line)
+    return out_lines
+
 
 class Builder:
     """Class for building U-Boot for a particular commit.
@@ -399,6 +483,7 @@ class Builder:
             show_not_built=False)
         self._filter_dtb_warnings = False
         self._filter_migration_warnings = False
+        self._filter_blob_warnings = False
 
         # Attributes set by other methods
         self._build_period = None
@@ -412,6 +497,12 @@ class Builder:
         self.timestamps = collections.deque()
         self.verbose = False
         self.progress = ''
+
+        # Progress is normally shown on a single line, which is overwritten
+        # as each build finishes. That needs a terminal: when the output goes
+        # to a file or a CI log, show a line only every so often
+        self._progress_period = 0 if have_terminal() else PROGRESS_PERIOD
+        self._last_progress = None
 
         # True when building across remote machines, so the progress line
         # tags local builds with [local] to tell them apart from remote ones
@@ -529,7 +620,8 @@ class Builder:
 
     def set_display_options(self, display_options,
                             filter_dtb_warnings=False,
-                            filter_migration_warnings=False):
+                            filter_migration_warnings=False,
+                            filter_blob_warnings=False):
         """Setup display options for the builder.
 
         Args:
@@ -541,10 +633,13 @@ class Builder:
                 device-tree compiler
             filter_migration_warnings (bool): Filter out any warnings about
                 migrating a board to driver model
+            filter_blob_warnings (bool): Filter out any messages from binman
+                about missing binary blobs
         """
         self._opts = display_options
         self._filter_dtb_warnings = filter_dtb_warnings
         self._filter_migration_warnings = filter_migration_warnings
+        self._filter_blob_warnings = filter_blob_warnings
 
     @property
     def result_handler(self):
@@ -676,7 +771,9 @@ class Builder:
             self.upto += 1
             if result.return_code != 0:
                 self.fail += 1
-            elif result.stderr:
+            elif result.stderr and self._filter_errors(
+                    result.stderr.splitlines(keepends=True)):
+                # Output which is filtered out does not count as a warning
                 self._warned += 1
             if result.already_done:
                 self._already_done += 1
@@ -726,9 +823,21 @@ class Builder:
             line += f'{target} [local]'
         else:
             line += f'{target}'
-        if not self._opts.ide:
+        if self._opts.ide:
+            return
+        if not self._progress_period:
             terminal.print_clear()
             tprint(line, newline=False, limit_to_line=True)
+            return
+
+        # Show the final state, but otherwise wait until enough time has
+        # passed since the start of the build, or the last line shown
+        now = time.monotonic()
+        if self._last_progress is None:
+            self._last_progress = now
+        if not remaining or now - self._last_progress >= self._progress_period:
+            self._last_progress = now
+            tprint(line[1:])
 
     def get_output_dir(self, commit_upto):
         """Get the name of the output directory for a commit number
@@ -866,15 +975,28 @@ class Builder:
         """
         out_lines = []
         if self._filter_migration_warnings:
-            text = '\n'.join(lines)
-            text = RE_MIGRATION_WARNING.sub('', text)
-            lines = text.splitlines()
+            text = RE_MIGRATION_WARNING.sub('', ''.join(lines))
+            lines = text.splitlines(keepends=True)
+        if self._filter_blob_warnings:
+            lines = filter_blob_lines(lines)
+        in_dtb_warning = False
         for line in lines:
-            if RE_MAKE_ERR.search(line):
+            if RE_MAKE_ERR.search(line) or RE_LTO_SERIAL.search(line):
                 continue
-            if self._filter_dtb_warnings and RE_DTB_WARNING.search(line):
-                continue
+            if self._filter_dtb_warnings:
+                # Drop the warning along with any lines which belong to it
+                if RE_DTB_WARNING.search(line):
+                    in_dtb_warning = True
+                    continue
+                if in_dtb_warning and RE_DTB_ALSO.search(line):
+                    continue
+                if line.strip():
+                    in_dtb_warning = False
             out_lines.append(line)
+
+        # If only blank lines are left, the board has no output
+        if self._filter_blob_warnings and not ''.join(out_lines).strip():
+            return []
         return out_lines
 
     def read_func_sizes(self, _fname, fd):

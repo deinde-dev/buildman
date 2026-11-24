@@ -1568,8 +1568,25 @@ warnings will produce success (since 101 is changed to 0).
 
 If there are both warnings and errors, errors win, so Buildman returns 100.
 
-The -y option is provided (for use with -s) to ignore the bountiful device-tree
-warnings. Similarly, -Y tells Buildman to ignore the migration warnings.
+The -y option is provided to ignore the bountiful device-tree warnings.
+Similarly, -Y tells Buildman to ignore the migration warnings. Both can be used
+when building as well as with -s. A board whose output is all filtered out is
+shown as building without warnings and is not counted as having them, so it
+does not cause Buildman to return 101.
+
+In the same way, ``--filter-blob-warnings`` ignores the messages which binman
+produces about missing binary blobs, along with the help which it shows for
+each one. These are expected when building without the blobs (see -M) and
+nothing can be done about them. When a lot of boards are built they run to
+thousands of lines, which makes it hard to find the output which needs
+attention. For example, a CI job might use::
+
+    buildman -o /tmp/build -PEWM -yY --filter-blob-warnings
+
+Buildman shows its progress on a single line, which it updates as each build
+finishes. This needs a terminal. When the output goes somewhere else, such as
+a file or a CI log, Buildman instead shows a line of progress at most once a
+minute, with another when the build finishes.
 
 When some boards cannot be built (e.g. because a toolchain is missing),
 Buildman can report which boards were skipped. Use ``--show-not-built`` to
